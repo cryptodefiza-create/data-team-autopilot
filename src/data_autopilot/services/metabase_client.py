@@ -11,6 +11,7 @@ class MetabaseClient:
     def __init__(self) -> None:
         self.settings = get_settings()
         self._dashboards_by_key: dict[str, dict[str, Any]] = {}
+        self._base_url = self.settings.metabase_url.rstrip("/")
 
     def _headers(self) -> dict[str, str]:
         return {"X-API-Key": self.settings.metabase_api_key}
@@ -19,8 +20,8 @@ class MetabaseClient:
         if self.settings.metabase_mock_mode:
             return {"ok": True, "mode": "mock"}
 
-        with httpx.Client(timeout=15) as client:
-            resp = client.get(f"{self.settings.metabase_url}/api/user/current", headers=self._headers())
+        with httpx.Client(timeout=15, follow_redirects=True) as client:
+            resp = client.get(f"{self._base_url}/api/user/current", headers=self._headers())
             resp.raise_for_status()
             body = resp.json()
             return {"ok": bool(body.get("id")), "mode": "live"}
@@ -29,9 +30,9 @@ class MetabaseClient:
         if self.settings.metabase_mock_mode:
             return f"card_{uuid4().hex[:10]}"
 
-        with httpx.Client(timeout=15) as client:
+        with httpx.Client(timeout=15, follow_redirects=True) as client:
             r = client.post(
-                f"{self.settings.metabase_url}/api/card",
+                f"{self._base_url}/api/card",
                 headers=self._headers(),
                 json={"name": name, "dataset_query": {"type": "native", "native": {"query": sql}}, "display": "line"},
             )
@@ -50,11 +51,11 @@ class MetabaseClient:
             self._dashboards_by_key[key] = {"id": dash_id, "card_ids": card_ids, "layout": layout, "name": name}
             return dash_id
 
-        with httpx.Client(timeout=15) as client:
+        with httpx.Client(timeout=15, follow_redirects=True) as client:
             existing = self._dashboards_by_key.get(key)
             if existing is None:
                 r = client.post(
-                    f"{self.settings.metabase_url}/api/dashboard",
+                    f"{self._base_url}/api/dashboard",
                     headers=self._headers(),
                     json={"name": name},
                 )
@@ -75,7 +76,7 @@ class MetabaseClient:
                     }
                 )
             rc = client.put(
-                f"{self.settings.metabase_url}/api/dashboard/{dash_id}/cards",
+                f"{self._base_url}/api/dashboard/{dash_id}/cards",
                 headers=self._headers(),
                 json={"cards": cards_payload},
             )
