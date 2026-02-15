@@ -1,4 +1,5 @@
 from functools import lru_cache
+import json
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -32,6 +33,7 @@ class Settings(BaseSettings):
     bigquery_mock_mode: bool = Field(default=True)
     bigquery_project_id: str = Field(default="")
     bigquery_location: str = Field(default="US")
+    bigquery_service_account_json: str = Field(default="")
     run_startup_connection_tests: bool = Field(default=False)
     simulate_llm_unavailable: bool = Field(default=False)
     simulate_warehouse_unavailable: bool = Field(default=False)
@@ -60,6 +62,14 @@ class Settings(BaseSettings):
 
         if not self.bigquery_mock_mode and not self.bigquery_project_id:
             raise ValueError("BIGQUERY_MOCK_MODE=false requires BIGQUERY_PROJECT_ID")
+
+        if self.bigquery_service_account_json:
+            try:
+                parsed = json.loads(self.bigquery_service_account_json)
+            except Exception as exc:
+                raise ValueError("BIGQUERY_SERVICE_ACCOUNT_JSON must be valid JSON") from exc
+            if not isinstance(parsed, dict):
+                raise ValueError("BIGQUERY_SERVICE_ACCOUNT_JSON must be a JSON object")
 
         return self
 

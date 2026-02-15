@@ -60,6 +60,7 @@ check_bool RUN_STARTUP_CONNECTION_TESTS true
 check_bool ALLOW_REAL_QUERY_EXECUTION false
 
 check_required BIGQUERY_PROJECT_ID
+check_required BIGQUERY_SERVICE_ACCOUNT_JSON
 check_required METABASE_URL
 check_required METABASE_API_KEY
 check_required REDIS_URL

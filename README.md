@@ -221,6 +221,7 @@ Supported `binding_type` values:
 Set the following for live deployment:
 - `BIGQUERY_MOCK_MODE=false`
 - `BIGQUERY_PROJECT_ID=<your_project>`
+- `BIGQUERY_SERVICE_ACCOUNT_JSON=<service_account_json_string>`
 - `METABASE_MOCK_MODE=false`
 - `METABASE_URL=<your_metabase_url>`
 - `METABASE_API_KEY=<your_api_key>`

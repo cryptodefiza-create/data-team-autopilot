@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import re
 from typing import Any
 
@@ -22,6 +23,17 @@ class BigQueryConnector:
         self.cache = cache or CacheService()
         self.settings = get_settings()
 
+    def _resolve_service_account(self, service_account_json: dict | None) -> dict | None:
+        if service_account_json:
+            return service_account_json
+        raw = (self.settings.bigquery_service_account_json or "").strip()
+        if not raw:
+            return None
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise RuntimeError("BIGQUERY_SERVICE_ACCOUNT_JSON must be a JSON object")
+        return parsed
+
     def _build_client(self, service_account_json: dict | None = None):
         try:
             from google.cloud import bigquery  # type: ignore
@@ -31,9 +43,14 @@ class BigQueryConnector:
                 "BigQuery live mode requires google-cloud-bigquery and google-auth"
             ) from exc
 
+        resolved = self._resolve_service_account(service_account_json)
         credentials = None
-        if service_account_json:
-            credentials = service_account.Credentials.from_service_account_info(service_account_json)
+        if resolved:
+            credentials = service_account.Credentials.from_service_account_info(resolved)
+        else:
+            raise RuntimeError(
+                "No BigQuery credentials available. Set BIGQUERY_SERVICE_ACCOUNT_JSON or connect a tenant service account."
+            )
         return bigquery.Client(
             project=self.settings.bigquery_project_id,
             credentials=credentials,
