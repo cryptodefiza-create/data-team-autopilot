@@ -16,6 +16,8 @@ Base.metadata.create_all(bind=engine)
 
 def _ensure_schema_compat() -> None:
     """Apply lightweight compatibility migrations for local SQLite dev DBs."""
+    if engine.dialect.name != "sqlite":
+        return
     with engine.begin() as conn:
         rows = conn.execute(text("PRAGMA table_info('workflow_queue')")).fetchall()
         names = {str(r[1]) for r in rows}
