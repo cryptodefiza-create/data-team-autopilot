@@ -5,10 +5,7 @@ import json
 
 
 class SecretsManager:
-    """Envelope-encryption placeholder for MVP local build.
-
-    Real deployments should switch to KMS-backed encryption keys.
-    """
+    """Local encryption helper."""
 
     def encrypt(self, payload: dict) -> dict:
         raw = json.dumps(payload).encode("utf-8")

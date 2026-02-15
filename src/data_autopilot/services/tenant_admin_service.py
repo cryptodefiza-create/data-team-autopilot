@@ -39,6 +39,47 @@ class TenantPurgePreview:
 
 
 class TenantAdminService:
+    CACHE_PREFIX_TEMPLATES = (
+        "cost_budget:{tenant_id}",
+        "query:{tenant_id}:",
+        "session:{tenant_id}:",
+        "tenant:{tenant_id}:",
+    )
+
+    PREVIEW_COUNT_QUERIES = {
+        "connections": lambda tenant_id: select(func.count(Connection.id)).where(Connection.tenant_id == tenant_id),
+        "catalog_tables": lambda tenant_id: select(func.count(CatalogTable.id)).where(CatalogTable.tenant_id == tenant_id),
+        "catalog_columns": lambda tenant_id: select(func.count(CatalogColumn.id)).where(CatalogColumn.tenant_id == tenant_id),
+        "artifacts": lambda tenant_id: select(func.count(Artifact.id)).where(Artifact.tenant_id == tenant_id),
+        "artifact_versions": lambda tenant_id: select(func.count(ArtifactVersion.id)).where(ArtifactVersion.tenant_id == tenant_id),
+        "feedback": lambda tenant_id: select(func.count(Feedback.id)).where(Feedback.tenant_id == tenant_id),
+        "workflow_runs": lambda tenant_id: select(func.count(WorkflowRun.id)).where(WorkflowRun.tenant_id == tenant_id),
+        "workflow_queue": lambda tenant_id: select(func.count(WorkflowQueue.id)).where(WorkflowQueue.tenant_id == tenant_id),
+        "workflow_dead_letters": lambda tenant_id: select(func.count(WorkflowDeadLetter.id)).where(WorkflowDeadLetter.tenant_id == tenant_id),
+        "query_approvals": lambda tenant_id: select(func.count(QueryApproval.id)).where(QueryApproval.tenant_id == tenant_id),
+        "alerts": lambda tenant_id: select(func.count(AlertEvent.id)).where(AlertEvent.tenant_id == tenant_id),
+        "alert_notifications": lambda tenant_id: select(func.count(AlertNotification.id)).where(AlertNotification.tenant_id == tenant_id),
+        "users": lambda tenant_id: select(func.count(User.id)).where(User.tenant_id == tenant_id),
+        "tenant_rows": lambda tenant_id: select(func.count(Tenant.id)).where(Tenant.id == tenant_id),
+    }
+
+    DELETE_MODELS = (
+        ("alert_notifications", AlertNotification, "tenant_id"),
+        ("alerts", AlertEvent, "tenant_id"),
+        ("query_approvals", QueryApproval, "tenant_id"),
+        ("workflow_dead_letters", WorkflowDeadLetter, "tenant_id"),
+        ("workflow_queue", WorkflowQueue, "tenant_id"),
+        ("workflow_runs", WorkflowRun, "tenant_id"),
+        ("feedback", Feedback, "tenant_id"),
+        ("artifact_versions", ArtifactVersion, "tenant_id"),
+        ("artifacts", Artifact, "tenant_id"),
+        ("catalog_columns", CatalogColumn, "tenant_id"),
+        ("catalog_tables", CatalogTable, "tenant_id"),
+        ("connections", Connection, "tenant_id"),
+        ("users", User, "tenant_id"),
+        ("tenant_rows", Tenant, "id"),
+    )
+
     def __init__(self) -> None:
         self.cache = CacheService()
         self.audit = AuditService()
@@ -50,32 +91,13 @@ class TenantAdminService:
             db,
             select(func.count(WorkflowQueue.id)).where(WorkflowQueue.tenant_id == tenant_id, WorkflowQueue.status == "queued"),
         )
-        counts = {
-            "connections": self._count(db, select(func.count(Connection.id)).where(Connection.tenant_id == tenant_id)),
-            "catalog_tables": self._count(db, select(func.count(CatalogTable.id)).where(CatalogTable.tenant_id == tenant_id)),
-            "catalog_columns": self._count(db, select(func.count(CatalogColumn.id)).where(CatalogColumn.tenant_id == tenant_id)),
-            "artifacts": self._count(db, select(func.count(Artifact.id)).where(Artifact.tenant_id == tenant_id)),
-            "artifact_versions": self._count(db, select(func.count(ArtifactVersion.id)).where(ArtifactVersion.tenant_id == tenant_id)),
-            "feedback": self._count(db, select(func.count(Feedback.id)).where(Feedback.tenant_id == tenant_id)),
-            "workflow_runs": self._count(db, select(func.count(WorkflowRun.id)).where(WorkflowRun.tenant_id == tenant_id)),
-            "workflow_steps": self._count(
-                db,
-                select(func.count(WorkflowStep.id)).where(
-                    WorkflowStep.workflow_id.in_(select(WorkflowRun.id).where(WorkflowRun.tenant_id == tenant_id))
-                ),
+        counts = {name: self._count(db, query(tenant_id)) for name, query in self.PREVIEW_COUNT_QUERIES.items()}
+        counts["workflow_steps"] = self._count(
+            db,
+            select(func.count(WorkflowStep.id)).where(
+                WorkflowStep.workflow_id.in_(select(WorkflowRun.id).where(WorkflowRun.tenant_id == tenant_id))
             ),
-            "workflow_queue": self._count(db, select(func.count(WorkflowQueue.id)).where(WorkflowQueue.tenant_id == tenant_id)),
-            "workflow_dead_letters": self._count(
-                db, select(func.count(WorkflowDeadLetter.id)).where(WorkflowDeadLetter.tenant_id == tenant_id)
-            ),
-            "query_approvals": self._count(db, select(func.count(QueryApproval.id)).where(QueryApproval.tenant_id == tenant_id)),
-            "alerts": self._count(db, select(func.count(AlertEvent.id)).where(AlertEvent.tenant_id == tenant_id)),
-            "alert_notifications": self._count(
-                db, select(func.count(AlertNotification.id)).where(AlertNotification.tenant_id == tenant_id)
-            ),
-            "users": self._count(db, select(func.count(User.id)).where(User.tenant_id == tenant_id)),
-            "tenant_rows": self._count(db, select(func.count(Tenant.id)).where(Tenant.id == tenant_id)),
-        }
+        )
         audit_rows_retained = self._count(db, select(func.count(AuditLog.id)).where(AuditLog.tenant_id == tenant_id))
         estimated_cache_entries = self._estimate_cache_entries(tenant_id)
         return TenantPurgePreview(
@@ -120,34 +142,8 @@ class TenantAdminService:
             ).rowcount or 0
         else:
             deleted["workflow_steps"] = 0
-        deleted["alert_notifications"] = db.execute(
-            delete(AlertNotification).where(AlertNotification.tenant_id == tenant_id)
-        ).rowcount or 0
-        deleted["alerts"] = db.execute(delete(AlertEvent).where(AlertEvent.tenant_id == tenant_id)).rowcount or 0
-        deleted["query_approvals"] = db.execute(
-            delete(QueryApproval).where(QueryApproval.tenant_id == tenant_id)
-        ).rowcount or 0
-        deleted["workflow_dead_letters"] = db.execute(
-            delete(WorkflowDeadLetter).where(WorkflowDeadLetter.tenant_id == tenant_id)
-        ).rowcount or 0
-        deleted["workflow_queue"] = db.execute(
-            delete(WorkflowQueue).where(WorkflowQueue.tenant_id == tenant_id)
-        ).rowcount or 0
-        deleted["workflow_runs"] = db.execute(delete(WorkflowRun).where(WorkflowRun.tenant_id == tenant_id)).rowcount or 0
-        deleted["feedback"] = db.execute(delete(Feedback).where(Feedback.tenant_id == tenant_id)).rowcount or 0
-        deleted["artifact_versions"] = db.execute(
-            delete(ArtifactVersion).where(ArtifactVersion.tenant_id == tenant_id)
-        ).rowcount or 0
-        deleted["artifacts"] = db.execute(delete(Artifact).where(Artifact.tenant_id == tenant_id)).rowcount or 0
-        deleted["catalog_columns"] = db.execute(
-            delete(CatalogColumn).where(CatalogColumn.tenant_id == tenant_id)
-        ).rowcount or 0
-        deleted["catalog_tables"] = db.execute(
-            delete(CatalogTable).where(CatalogTable.tenant_id == tenant_id)
-        ).rowcount or 0
-        deleted["connections"] = db.execute(delete(Connection).where(Connection.tenant_id == tenant_id)).rowcount or 0
-        deleted["users"] = db.execute(delete(User).where(User.tenant_id == tenant_id)).rowcount or 0
-        deleted["tenant_rows"] = db.execute(delete(Tenant).where(Tenant.id == tenant_id)).rowcount or 0
+        for key, model, attr in self.DELETE_MODELS:
+            deleted[key] = db.execute(delete(model).where(getattr(model, attr) == tenant_id)).rowcount or 0
         db.commit()
 
         cache_deleted = self._purge_tenant_cache(tenant_id)
@@ -164,19 +160,10 @@ class TenantAdminService:
         return int(db.execute(stmt).scalar_one() or 0)
 
     def _estimate_cache_entries(self, tenant_id: str) -> int:
-        prefixes = [
-            f"cost_budget:{tenant_id}",
-            f"query:{tenant_id}:",
-            f"session:{tenant_id}:",
-            f"tenant:{tenant_id}:",
-        ]
-        return sum(self.cache.store.count_prefix(prefix) for prefix in prefixes)
+        return sum(self.cache.store.count_prefix(prefix) for prefix in self._cache_prefixes(tenant_id))
 
     def _purge_tenant_cache(self, tenant_id: str) -> int:
-        prefixes = [
-            f"cost_budget:{tenant_id}",
-            f"query:{tenant_id}:",
-            f"session:{tenant_id}:",
-            f"tenant:{tenant_id}:",
-        ]
-        return sum(self.cache.store.delete_prefix(prefix) for prefix in prefixes)
+        return sum(self.cache.store.delete_prefix(prefix) for prefix in self._cache_prefixes(tenant_id))
+
+    def _cache_prefixes(self, tenant_id: str) -> list[str]:
+        return [template.format(tenant_id=tenant_id) for template in self.CACHE_PREFIX_TEMPLATES]

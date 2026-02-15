@@ -20,6 +20,11 @@ def main() -> int:
     parser.add_argument("--org-id", default="org_smoke")
     parser.add_argument("--user-id", default="user_smoke")
     parser.add_argument("--in-process", action="store_true", help="Run against FastAPI app in-process (no network sockets)")
+    parser.add_argument(
+        "--expect-live",
+        action="store_true",
+        help="Assert ready checks are non-mock and use BIGQUERY_SERVICE_ACCOUNT_JSON for connector setup",
+    )
     args = parser.parse_args()
 
     if args.in_process:
@@ -44,10 +49,27 @@ def main() -> int:
 
         ready = client.get(f"{base}/ready")
         expect(ready.status_code == 200, "ready check failed")
+        ready_payload = ready.json()
+        if args.expect_live:
+            bq = ready_payload.get("checks", {}).get("bigquery", {})
+            mb = ready_payload.get("checks", {}).get("metabase", {})
+            expect(bool(ready_payload.get("ok")), "ready checks are not healthy in live mode")
+            expect(bq.get("mode") != "mock", "bigquery ready check is still in mock mode")
+            expect(mb.get("mode") != "mock", "metabase ready check is still in mock mode")
+
+        if args.expect_live:
+            raw = os.getenv("BIGQUERY_SERVICE_ACCOUNT_JSON", "")
+            expect(bool(raw.strip()), "BIGQUERY_SERVICE_ACCOUNT_JSON is required for live smoke")
+            try:
+                service_account_json = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("BIGQUERY_SERVICE_ACCOUNT_JSON must be valid JSON") from exc
+        else:
+            service_account_json = {"client_email": "smoke@example.com"}
 
         connect = client.post(
             f"{base}/api/v1/connectors/bigquery",
-            json={"org_id": args.org_id, "service_account_json": {"client_email": "smoke@example.com"}},
+            json={"org_id": args.org_id, "service_account_json": service_account_json},
             headers=tenant_headers,
         )
         expect(connect.status_code == 200, "connect failed")
@@ -99,7 +121,7 @@ def main() -> int:
         print(json.dumps({
             "ok": True,
             "health": health.json(),
-            "ready": ready.json(),
+            "ready": ready_payload,
             "dashboard": dash,
             "memo": memo_payload,
             "feedback_summary": summary.json(),

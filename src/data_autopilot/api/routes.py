@@ -1,525 +1,44 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from data_autopilot.config.settings import get_settings
+from data_autopilot.api.core_routes import router as core_router
+from data_autopilot.api.integration_routes import router as integration_router
+from data_autopilot.api.workflow_routes import router as workflow_router
+from data_autopilot.api.state import (
+    agent_service,
+    alert_service,
+    artifact_service,
+    audit_service,
+    bigquery_connector,
+    connector_service,
+    degradation_service,
+    feedback_service,
+    metabase_client,
+    notification_service,
+    query_service,
+    tenant_admin_service,
+    integration_binding_service,
+    workflow_service,
+)
 from data_autopilot.db.session import get_db
 from data_autopilot.models.entities import Role
 from data_autopilot.security.rbac import require_admin, require_member_or_admin, role_from_headers
 from data_autopilot.security.tenancy import ensure_tenant_scope, tenant_from_headers
 from data_autopilot.schemas.common import (
-    AgentRequest,
-    AgentResponse,
     ConnectorRequest,
     ConnectorResponse,
-    FeedbackRequest,
-    FeedbackResponse,
-    HealthResponse,
 )
-from data_autopilot.services.agent_service import AgentService
-from data_autopilot.services.artifact_service import ArtifactService
-from data_autopilot.services.audit import AuditService
-from data_autopilot.services.connector_service import ConnectorService
-from data_autopilot.services.feedback_service import FeedbackService
-from data_autopilot.services.metabase_client import MetabaseClient
-from data_autopilot.services.workflow_service import WorkflowService
-from data_autopilot.services.bigquery_connector import BigQueryConnector
-from data_autopilot.services.degradation_service import DegradationService
-from data_autopilot.services.query_service import QueryService
-from data_autopilot.services.alert_service import AlertService
-from data_autopilot.services.notification_service import NotificationService
-from data_autopilot.services.tenant_admin_service import TenantAdminService
 from data_autopilot.models.entities import AlertSeverity, AlertStatus
-from data_autopilot.models.entities import WorkflowQueue
 from data_autopilot.models.entities import CatalogColumn
+from data_autopilot.models.entities import IntegrationBindingType
 
 router = APIRouter()
-agent_service = AgentService()
-feedback_service = FeedbackService()
-workflow_service = WorkflowService()
-connector_service = ConnectorService()
-metabase_client = MetabaseClient()
-bigquery_connector = BigQueryConnector()
-degradation_service = DegradationService()
-artifact_service = ArtifactService()
-audit_service = AuditService()
-query_service = QueryService()
-alert_service = AlertService()
-notification_service = NotificationService()
-tenant_admin_service = TenantAdminService()
-
-
-def _auto_alert_from_workflow_result(db: Session, org_id: str, workflow_type: str, result: dict) -> None:
-    if result.get("workflow_status") != "partial_failure":
-        return
-    failed = result.get("failed_step", {})
-    failed_step = str(failed.get("step", "unknown_step"))
-    message = str(failed.get("error", "workflow step failed"))
-    alert_service.create_or_update(
-        db,
-        tenant_id=org_id,
-        dedupe_key=f"workflow_partial_failure:{workflow_type}:{failed_step}",
-        title=f"{workflow_type} workflow partial failure",
-        message=f"Step '{failed_step}' failed: {message}",
-        severity=AlertSeverity.P1,
-        source_type="workflow",
-        source_id=workflow_type,
-    )
-
-
-def _auto_alert_from_memo_anomalies(db: Session, org_id: str, artifact_id: str) -> None:
-    artifact = artifact_service.get(db, artifact_id=artifact_id, tenant_id=org_id)
-    if artifact is None:
-        return
-    packet = (artifact.data or {}).get("packet", {})
-    notes = packet.get("anomaly_notes", [])
-    if not isinstance(notes, list) or not notes:
-        return
-    for note in notes:
-        key = str(note).strip()
-        if not key:
-            continue
-        alert_service.create_or_update(
-            db,
-            tenant_id=org_id,
-            dedupe_key=f"memo_anomaly:{abs(hash(key))}",
-            title="Data quality anomaly detected",
-            message=key,
-            severity=AlertSeverity.P2,
-            source_type="data_quality",
-            source_id="memo",
-        )
-
-
-@router.get('/health', response_model=HealthResponse)
-def health() -> HealthResponse:
-    settings = get_settings()
-    return HealthResponse(status="ok", app=settings.app_name)
-
-
-@router.get('/ready')
-def ready() -> dict:
-    settings = get_settings()
-    checks: dict[str, dict] = {}
-
-    if settings.bigquery_mock_mode:
-        checks["bigquery"] = {"ok": True, "mode": "mock"}
-    else:
-        checks["bigquery"] = bigquery_connector.test_connection()
-
-    if settings.metabase_mock_mode:
-        checks["metabase"] = {"ok": True, "mode": "mock"}
-    else:
-        checks["metabase"] = metabase_client.test_connection()
-
-    ok = all(bool(v.get("ok")) for v in checks.values())
-    return {"ok": ok, "checks": checks}
-
-
-@router.post('/api/v1/agent/run', response_model=AgentResponse)
-def run_agent(
-    req: AgentRequest,
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(tenant_from_headers),
-    role: Role = Depends(role_from_headers),
-) -> AgentResponse:
-    ensure_tenant_scope(tenant_id, req.org_id)
-    require_member_or_admin(role)
-    settings = get_settings()
-    if settings.allow_real_query_execution:
-        raise HTTPException(status_code=500, detail="Real query execution is not wired yet")
-
-    result = agent_service.run(db=db, org_id=req.org_id, user_id=req.user_id, message=req.message)
-    audit_service.log(
-        db,
-        tenant_id=req.org_id,
-        event_type="agent_run",
-        payload={"user_id": req.user_id, "session_id": req.session_id, "response_type": result.get("response_type")},
-    )
-    return AgentResponse(**result)
-
-
-@router.post('/api/v1/feedback', response_model=FeedbackResponse)
-def create_feedback(
-    req: FeedbackRequest,
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(tenant_from_headers),
-    role: Role = Depends(role_from_headers),
-) -> FeedbackResponse:
-    ensure_tenant_scope(tenant_id, req.tenant_id)
-    row = feedback_service.create(db, req)
-    audit_service.log(
-        db,
-        tenant_id=req.tenant_id,
-        event_type="feedback_created",
-        payload={
-            "artifact_id": req.artifact_id,
-            "artifact_version": req.artifact_version,
-            "artifact_type": req.artifact_type,
-            "feedback_type": req.feedback_type,
-        },
-    )
-    return FeedbackResponse(id=row.id, created_at=row.created_at)
-
-
-@router.get('/api/v1/feedback/summary')
-def feedback_summary(
-    org_id: str,
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(tenant_from_headers),
-    role: Role = Depends(role_from_headers),
-) -> dict:
-    ensure_tenant_scope(tenant_id, org_id)
-    summary = feedback_service.summary(db, tenant_id=org_id)
-    audit_service.log(db, tenant_id=org_id, event_type="feedback_summary_viewed", payload={"org_id": org_id})
-    return summary
-
-
-@router.post('/api/v1/workflows/profile')
-def run_profile_workflow(
-    org_id: str,
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(tenant_from_headers),
-    role: Role = Depends(role_from_headers),
-) -> dict:
-    ensure_tenant_scope(tenant_id, org_id)
-    require_member_or_admin(role)
-    if not workflow_service.has_capacity(db, tenant_id=org_id, workflow_type="profile"):
-        queued = degradation_service.enqueue(
-            db,
-            tenant_id=org_id,
-            workflow_type="profile",
-            payload={"org_id": org_id},
-            reason="concurrency_limit",
-        )
-        audit_service.log(db, tenant_id=org_id, event_type="workflow_queued", payload={"workflow_type": "profile", "reason": "concurrency_limit", "queue_id": queued.get("queue_id")})
-        return queued
-    if not degradation_service.warehouse_available():
-        queued = degradation_service.enqueue(
-            db,
-            tenant_id=org_id,
-            workflow_type="profile",
-            payload={"org_id": org_id},
-            reason="warehouse_unavailable",
-        )
-        audit_service.log(db, tenant_id=org_id, event_type="workflow_queued", payload={"workflow_type": "profile", "reason": "warehouse_unavailable"})
-        return queued
-    result = workflow_service.run_profile_flow(db, tenant_id=org_id)
-    _auto_alert_from_workflow_result(db, org_id=org_id, workflow_type="profile", result=result)
-    audit_service.log(db, tenant_id=org_id, event_type="workflow_run", payload={"workflow_type": "profile", "status": result.get("status")})
-    return result
-
-
-@router.post('/api/v1/workflows/dashboard')
-def run_dashboard_workflow(
-    org_id: str,
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(tenant_from_headers),
-    role: Role = Depends(role_from_headers),
-) -> dict:
-    ensure_tenant_scope(tenant_id, org_id)
-    require_member_or_admin(role)
-    if not workflow_service.has_capacity(db, tenant_id=org_id, workflow_type="dashboard"):
-        queued = degradation_service.enqueue(
-            db,
-            tenant_id=org_id,
-            workflow_type="dashboard",
-            payload={"org_id": org_id},
-            reason="concurrency_limit",
-        )
-        audit_service.log(db, tenant_id=org_id, event_type="workflow_queued", payload={"workflow_type": "dashboard", "reason": "concurrency_limit", "queue_id": queued.get("queue_id")})
-        return queued
-    if not degradation_service.warehouse_available():
-        queued = degradation_service.enqueue(
-            db,
-            tenant_id=org_id,
-            workflow_type="dashboard",
-            payload={"org_id": org_id},
-            reason="warehouse_unavailable",
-        )
-        audit_service.log(db, tenant_id=org_id, event_type="workflow_queued", payload={"workflow_type": "dashboard", "reason": "warehouse_unavailable"})
-        return queued
-    result = workflow_service.run_dashboard_flow(db, tenant_id=org_id)
-    _auto_alert_from_workflow_result(db, org_id=org_id, workflow_type="dashboard", result=result)
-    audit_service.log(db, tenant_id=org_id, event_type="workflow_run", payload={"workflow_type": "dashboard", "status": result.get("status"), "artifact_id": result.get("artifact_id")})
-    return result
-
-
-@router.post('/api/v1/workflows/memo')
-def run_memo_workflow(
-    org_id: str,
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(tenant_from_headers),
-    role: Role = Depends(role_from_headers),
-) -> dict:
-    ensure_tenant_scope(tenant_id, org_id)
-    require_member_or_admin(role)
-    if not workflow_service.has_capacity(db, tenant_id=org_id, workflow_type="memo"):
-        queued = degradation_service.enqueue(
-            db,
-            tenant_id=org_id,
-            workflow_type="memo",
-            payload={"org_id": org_id},
-            reason="concurrency_limit",
-        )
-        audit_service.log(db, tenant_id=org_id, event_type="workflow_queued", payload={"workflow_type": "memo", "reason": "concurrency_limit", "queue_id": queued.get("queue_id")})
-        return queued
-    if not degradation_service.llm_available():
-        queued = degradation_service.enqueue(
-            db,
-            tenant_id=org_id,
-            workflow_type="memo",
-            payload={"org_id": org_id},
-            reason="llm_unavailable",
-        )
-        audit_service.log(db, tenant_id=org_id, event_type="workflow_queued", payload={"workflow_type": "memo", "reason": "llm_unavailable"})
-        return queued
-    result = workflow_service.run_memo_flow(db, tenant_id=org_id)
-    _auto_alert_from_workflow_result(db, org_id=org_id, workflow_type="memo", result=result)
-    if result.get("status") == "success" and result.get("artifact_id"):
-        _auto_alert_from_memo_anomalies(db, org_id=org_id, artifact_id=str(result["artifact_id"]))
-    audit_service.log(db, tenant_id=org_id, event_type="workflow_run", payload={"workflow_type": "memo", "status": result.get("status"), "artifact_id": result.get("artifact_id")})
-    return result
-
-
-@router.post('/api/v1/workflows/process-queue')
-def process_queue(
-    org_id: str,
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(tenant_from_headers),
-    role: Role = Depends(role_from_headers),
-) -> dict:
-    ensure_tenant_scope(tenant_id, org_id)
-    require_member_or_admin(role)
-    queued = degradation_service.fetch_queued(db, tenant_id=org_id)
-    available_slots = max(0, get_settings().per_org_max_workflows - workflow_service._active_count(db, tenant_id=org_id))
-    processed = 0
-    skipped = 0
-    dead_lettered = 0
-    deferred_due_capacity = 0
-    for row in queued:
-        if processed >= available_slots:
-            deferred_due_capacity += 1
-            continue
-        if row.workflow_type in {"profile", "dashboard"} and not degradation_service.warehouse_available():
-            skipped += 1
-            continue
-        if row.workflow_type == "memo" and not degradation_service.llm_available():
-            skipped += 1
-            continue
-
-        try:
-            payload = dict(row.payload or {})
-            if row.workflow_type == "profile":
-                result = workflow_service.run_profile_flow(db, tenant_id=row.tenant_id, payload=payload)
-            elif row.workflow_type == "dashboard":
-                result = workflow_service.run_dashboard_flow(db, tenant_id=row.tenant_id, payload=payload)
-            else:
-                result = workflow_service.run_memo_flow(db, tenant_id=row.tenant_id, payload=payload)
-
-            if result.get("workflow_status") == "partial_failure":
-                degradation_service.mark_failed_attempt(db, row, result.get("failed_step", {}).get("error", "workflow_failed"))
-                row.payload = payload
-                db.add(row)
-                db.commit()
-                if int(row.attempts or 0) >= 3:
-                    steps = result.get("completed_steps", [])
-                    degradation_service.move_to_dead_letter(db, row, step_states=steps)
-                    alert_service.create_or_update(
-                        db,
-                        tenant_id=org_id,
-                        dedupe_key=f"workflow_dead_letter:{row.workflow_type}:{row.id}",
-                        title=f"{row.workflow_type} workflow moved to dead letter",
-                        message=f"Queue item {row.id} failed repeatedly and was moved to dead letter.",
-                        severity=AlertSeverity.P0,
-                        source_type="workflow_queue",
-                        source_id=row.id,
-                    )
-                    dead_lettered += 1
-                else:
-                    skipped += 1
-                continue
-
-            degradation_service.mark_processed(db, row)
-            processed += 1
-        except Exception as exc:
-            degradation_service.mark_failed_attempt(db, row, str(exc))
-            if int(row.attempts or 0) >= 3:
-                degradation_service.move_to_dead_letter(db, row, step_states=[])
-                alert_service.create_or_update(
-                    db,
-                    tenant_id=org_id,
-                    dedupe_key=f"workflow_dead_letter:{row.workflow_type}:{row.id}",
-                    title=f"{row.workflow_type} workflow moved to dead letter",
-                    message=f"Queue item {row.id} failed repeatedly and was moved to dead letter.",
-                    severity=AlertSeverity.P0,
-                    source_type="workflow_queue",
-                    source_id=row.id,
-                )
-                dead_lettered += 1
-            else:
-                skipped += 1
-
-    payload = {
-        "processed": processed,
-        "skipped": skipped,
-        "dead_lettered": dead_lettered,
-        "deferred_due_capacity": deferred_due_capacity,
-        "queued_total": len(queued),
-    }
-    audit_service.log(db, tenant_id=org_id, event_type="queue_processed", payload=payload)
-    return payload
-
-
-@router.get('/api/v1/workflows/queue')
-def queue_status(
-    org_id: str,
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(tenant_from_headers),
-    role: Role = Depends(role_from_headers),
-) -> dict:
-    ensure_tenant_scope(tenant_id, org_id)
-    require_member_or_admin(role)
-    queued = degradation_service.fetch_queued(db, tenant_id=org_id)
-    items = []
-    for idx, row in enumerate(queued, start=1):
-        items.append(
-            {
-                "queue_id": row.id,
-                "workflow_type": row.workflow_type,
-                "reason": row.reason,
-                "attempts": row.attempts,
-                "position": idx,
-                "created_at": row.created_at.isoformat(),
-            }
-        )
-    response = {"org_id": org_id, "queued_total": len(items), "items": items}
-    audit_service.log(db, tenant_id=org_id, event_type="queue_viewed", payload={"queued_total": len(items)})
-    return response
-
-
-@router.get('/api/v1/workflows/dead-letters')
-def dead_letters(
-    org_id: str,
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(tenant_from_headers),
-    role: Role = Depends(role_from_headers),
-) -> dict:
-    ensure_tenant_scope(tenant_id, org_id)
-    require_member_or_admin(role)
-    rows = degradation_service.fetch_dead_letters(db, tenant_id=org_id)
-    response = {
-        "org_id": org_id,
-        "items": [
-            {
-                "dead_letter_id": row.id,
-                "queue_id": row.queue_id,
-                "workflow_type": row.workflow_type,
-                "error_history": row.error_history,
-                "created_at": row.created_at.isoformat(),
-            }
-            for row in rows
-        ],
-    }
-    audit_service.log(db, tenant_id=org_id, event_type="dead_letters_viewed", payload={"count": len(response["items"])})
-    return response
-
-
-@router.post('/api/v1/workflows/retry')
-def retry_workflow(
-    org_id: str,
-    workflow_type: str,
-    workflow_id: str | None = None,
-    action: str = "retry",
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(tenant_from_headers),
-    role: Role = Depends(role_from_headers),
-) -> dict:
-    ensure_tenant_scope(tenant_id, org_id)
-    require_member_or_admin(role)
-    payload: dict = {"retry_action": action}
-    if action == "retry_with_sampling":
-        payload["sampling"] = True
-    elif action == "skip_and_continue":
-        payload["skip_on_error"] = True
-
-    if workflow_type == "profile":
-        result = workflow_service.run_profile_flow(db, tenant_id=org_id, payload=payload, workflow_id=workflow_id)
-    elif workflow_type == "dashboard":
-        result = workflow_service.run_dashboard_flow(db, tenant_id=org_id, payload=payload, workflow_id=workflow_id)
-    elif workflow_type == "memo":
-        result = workflow_service.run_memo_flow(db, tenant_id=org_id, payload=payload, workflow_id=workflow_id)
-    else:
-        raise HTTPException(status_code=400, detail="Unsupported workflow_type")
-
-    if result.get("status") == "success" and workflow_id:
-        queued_rows = db.execute(
-            select(WorkflowQueue).where(
-                WorkflowQueue.tenant_id == org_id,
-                WorkflowQueue.workflow_type == workflow_type,
-                WorkflowQueue.status == "queued",
-            )
-        ).scalars().all()
-        for row in queued_rows:
-            degradation_service.mark_processed(db, row)
-
-    audit_service.log(
-        db,
-        tenant_id=org_id,
-        event_type="workflow_retry_requested",
-        payload={"workflow_type": workflow_type, "workflow_id": workflow_id, "action": action, "result_status": result.get("status", result.get("workflow_status"))},
-    )
-    return result
-
-
-@router.get('/api/v1/workflows/runs')
-def list_workflow_runs(
-    org_id: str,
-    status: str | None = None,
-    workflow_type: str | None = None,
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(tenant_from_headers),
-    role: Role = Depends(role_from_headers),
-) -> dict:
-    ensure_tenant_scope(tenant_id, org_id)
-    require_member_or_admin(role)
-    rows = workflow_service.list_runs(db, tenant_id=org_id, status=status, workflow_type=workflow_type)
-    items = [
-        {
-            "workflow_id": r.id,
-            "workflow_type": r.workflow_type,
-            "status": r.status,
-            "started_at": r.started_at.isoformat(),
-            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
-        }
-        for r in rows
-    ]
-    audit_service.log(db, tenant_id=org_id, event_type="workflow_runs_listed", payload={"count": len(items), "status": status, "workflow_type": workflow_type})
-    return {"org_id": org_id, "items": items}
-
-
-@router.post('/api/v1/workflows/{workflow_id}/cancel')
-def cancel_workflow_run(
-    workflow_id: str,
-    org_id: str,
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(tenant_from_headers),
-    role: Role = Depends(role_from_headers),
-) -> dict:
-    ensure_tenant_scope(tenant_id, org_id)
-    require_member_or_admin(role)
-    row = workflow_service.cancel_run(db, tenant_id=org_id, workflow_id=workflow_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="workflow not found")
-    audit_service.log(db, tenant_id=org_id, event_type="workflow_run_cancelled", payload={"workflow_id": workflow_id, "status": row.status})
-    return {
-        "workflow_id": row.id,
-        "workflow_type": row.workflow_type,
-        "status": row.status,
-        "finished_at": row.finished_at.isoformat() if row.finished_at else None,
-    }
+router.include_router(core_router)
+router.include_router(workflow_router)
+router.include_router(integration_router)
 
 
 @router.get('/api/v1/artifacts')
@@ -734,19 +253,17 @@ def pii_review_confirm(
         table = str(d.get("table", ""))
         column = str(d.get("column", ""))
         is_pii = bool(d.get("is_pii", False))
-        row = db.execute(
-            select(CatalogColumn).where(
+        result = db.execute(
+            update(CatalogColumn)
+            .where(
                 CatalogColumn.tenant_id == org_id,
                 CatalogColumn.dataset == dataset,
                 CatalogColumn.table_name == table,
                 CatalogColumn.column_name == column,
             )
-        ).scalar_one_or_none()
-        if row is None:
-            continue
-        row.is_pii = is_pii
-        db.add(row)
-        updated += 1
+            .values(is_pii=is_pii)
+        )
+        updated += int(result.rowcount or 0)
     db.commit()
     audit_service.log(db, tenant_id=org_id, event_type="pii_review_confirmed", payload={"updated": updated})
     return {"org_id": org_id, "updated": updated}
@@ -798,6 +315,90 @@ def query_approve_run(
         payload={"preview_id": preview_id, "status": result.get("status"), "actual_bytes": result.get("actual_bytes", 0)},
     )
     return result
+
+
+@router.get('/api/v1/integrations/bindings')
+def list_integration_bindings(
+    org_id: str,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(tenant_from_headers),
+    role: Role = Depends(role_from_headers),
+) -> dict:
+    ensure_tenant_scope(tenant_id, org_id)
+    require_admin(role)
+    rows = integration_binding_service.list_for_tenant(db, tenant_id=org_id)
+    items = [
+        {
+            "id": row.id,
+            "binding_type": row.binding_type.value,
+            "external_id": row.external_id,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row in rows
+    ]
+    audit_service.log(db, tenant_id=org_id, event_type="integration_bindings_listed", payload={"count": len(items)})
+    return {"org_id": org_id, "items": items}
+
+
+@router.post('/api/v1/integrations/bindings')
+def upsert_integration_binding(
+    req: dict,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(tenant_from_headers),
+    role: Role = Depends(role_from_headers),
+) -> dict:
+    org_id = str(req.get("org_id", ""))
+    binding_type_raw = str(req.get("binding_type", ""))
+    external_id = str(req.get("external_id", "")).strip()
+    ensure_tenant_scope(tenant_id, org_id)
+    require_admin(role)
+    if not external_id:
+        raise HTTPException(status_code=400, detail="external_id is required")
+    try:
+        binding_type = IntegrationBindingType(binding_type_raw)
+    except ValueError:
+        allowed = [v.value for v in IntegrationBindingType]
+        raise HTTPException(status_code=400, detail=f"invalid binding_type; allowed: {allowed}")
+    row = integration_binding_service.upsert(
+        db,
+        tenant_id=org_id,
+        binding_type=binding_type,
+        external_id=external_id,
+    )
+    audit_service.log(
+        db,
+        tenant_id=org_id,
+        event_type="integration_binding_upserted",
+        payload={"binding_id": row.id, "binding_type": row.binding_type.value},
+    )
+    return {
+        "org_id": org_id,
+        "id": row.id,
+        "binding_type": row.binding_type.value,
+        "external_id": row.external_id,
+    }
+
+
+@router.delete('/api/v1/integrations/bindings/{binding_id}')
+def delete_integration_binding(
+    binding_id: int,
+    org_id: str,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(tenant_from_headers),
+    role: Role = Depends(role_from_headers),
+) -> dict:
+    ensure_tenant_scope(tenant_id, org_id)
+    require_admin(role)
+    deleted = integration_binding_service.delete(db, tenant_id=org_id, binding_id=binding_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="binding not found")
+    audit_service.log(
+        db,
+        tenant_id=org_id,
+        event_type="integration_binding_deleted",
+        payload={"binding_id": binding_id},
+    )
+    return {"org_id": org_id, "deleted": True}
 
 
 @router.post('/api/v1/alerts')

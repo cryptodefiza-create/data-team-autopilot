@@ -1,26 +1,26 @@
 # Data Team Autopilot
 
-Implementation covering phases 0-6 foundations with safety-first execution defaults.
+Implementation for phases 0-6.
 
 ## Included
 - FastAPI app with health, agent run, and feedback endpoints
 - Connector endpoints for BigQuery connect/disconnect lifecycle
 - Core agent pipeline: planner -> validator -> critic -> executor -> composer
 - SQL safety engine (`sqlglot`) blocking DDL/DML and multi-statement SQL
-- Sliding-window cost limiter (Redis-backed with in-memory fallback)
-- Cache layer (Redis-backed with in-memory fallback)
+- Sliding-window cost limiter (Redis with in-memory mode)
+- Cache layer (Redis with in-memory mode)
 - BigQuery connector interface with dry-run and execution flow
 - Metabase client integration (mock mode by default, live API supported)
 - Dashboard generation with deterministic layout and idempotent versioning
-- Weekly memo generation with automated validation and fallback
-- Graceful degradation queue for memo/warehouse outages
+- Weekly memo generation with automated validation
+- Queue-based degradation for memo/warehouse outages
 - Workflow resiliency controls:
   - per-org concurrency caps with queueing (`concurrency_limit`)
   - resume on partial failures (workflow_id-aware)
   - dead-letter queue after repeated failed queue processing attempts
 - Audit logging persistence
 - Workflow persistence and idempotent step upsert
-- Test suite scaffold (unit + integration)
+- Test suite (unit + integration)
 - `/ready` endpoint for BigQuery + Metabase readiness checks
 - Feedback analytics endpoint (`/api/v1/feedback/summary`)
 - Artifact history endpoints:
@@ -74,6 +74,20 @@ Implementation covering phases 0-6 foundations with safety-first execution defau
 - RBAC + tenant boundary enforcement via headers:
   - `X-Tenant-Id`
   - `X-User-Role` (`admin`, `member`, `viewer`)
+- In-app chat shell with hotkey:
+  - `GET /app` opens chat interface
+  - `Cmd/Ctrl + K` opens modal, `Enter` sends prompt
+- Slack integrations:
+  - `POST /integrations/slack/command` (signed slash-command endpoint)
+  - `POST /integrations/slack/events` (signed events endpoint)
+  - HMAC signature check + 5-minute timestamp window + replay protection
+- Telegram integration:
+  - `POST /integrations/telegram/webhook`
+  - `X-Telegram-Bot-Api-Secret-Token` verification required
+- Integration binding management (admin):
+  - `GET /api/v1/integrations/bindings?org_id=<org>`
+  - `POST /api/v1/integrations/bindings`
+  - `DELETE /api/v1/integrations/bindings/{binding_id}?org_id=<org>`
 
 ## Run
 ```bash
@@ -117,6 +131,8 @@ python scripts/e2e_smoke.py --in-process
 - Basic load test:
 ```bash
 python scripts/load_test.py --base-url http://localhost:8000 --duration 30 --rps 2
+# or no-network in-process load test:
+python scripts/load_test_inprocess.py --requests 200 --concurrency 10
 ```
 
 - All-in-one CI verify (tests + migrations + smoke + load):
@@ -124,11 +140,82 @@ python scripts/load_test.py --base-url http://localhost:8000 --duration 30 --rps
 ./scripts/ci_verify.sh
 ```
 
+- Deployment checklist runner:
+```bash
+# required for live smoke (JSON string): export BIGQUERY_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}'
+./scripts/predeploy_checklist.sh deploy/.env.live
+```
+
 ## Notes
 - `ALLOW_REAL_QUERY_EXECUTION` defaults to `false`.
 - Metabase runs in mock mode by default (`METABASE_MOCK_MODE=true`).
 - BigQuery runs in mock mode by default (`BIGQUERY_MOCK_MODE=true`).
-- Redis is optional in local dev; service automatically falls back to in-memory stores.
+- Redis is optional in local dev; services use in-memory mode when Redis is unavailable.
+- Slack/TG requests are rejected unless secrets are configured:
+  - `SLACK_SIGNING_SECRET`
+  - `TELEGRAM_WEBHOOK_SECRET`
+
+## Chat Integrations Setup
+### In-app
+- Open `http://localhost:8000/app`
+- Set org/user/role once; values persist in browser local storage
+- Use `Cmd/Ctrl + K` to open chat quickly
+
+### Slack
+Set env:
+- `SLACK_SIGNING_SECRET`
+- `SLACK_BOT_TOKEN`
+- `SLACK_DEFAULT_ORG_ID` (optional, otherwise use `org:<org_id> <question>`)
+
+Configure Slack app:
+- Slash command request URL: `https://<your-domain>/integrations/slack/command`
+- Event subscriptions URL: `https://<your-domain>/integrations/slack/events`
+- Subscribe to `app_mention` events
+
+Usage:
+- `/askdata org:my_org show me dau`
+- Or with default org: `/askdata show me dau`
+- Production recommendation: bind Slack workspace/users to org via admin API and avoid relying on default org.
+
+### Telegram
+Set env:
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_WEBHOOK_SECRET`
+- `TELEGRAM_DEFAULT_ORG_ID` (optional)
+
+Set webhook:
+```bash
+curl -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+  -d "url=https://<your-domain>/integrations/telegram/webhook" \
+  -d "secret_token=${TELEGRAM_WEBHOOK_SECRET}"
+```
+
+Usage:
+- `/ask org:my_org show me dau`
+- Or with default org: `/ask show me dau`
+- Production recommendation: bind Telegram chat/user to org via admin API.
+
+### Secure org binding setup
+Use admin headers (`X-Tenant-Id`, `X-User-Role=admin`) and create bindings:
+```bash
+curl -X POST http://localhost:8000/api/v1/integrations/bindings \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-Id: org_a" \
+  -H "X-User-Role: admin" \
+  -d '{"org_id":"org_a","binding_type":"slack_team","external_id":"T123456"}'
+
+curl -X POST http://localhost:8000/api/v1/integrations/bindings \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-Id: org_a" \
+  -H "X-User-Role: admin" \
+  -d '{"org_id":"org_a","binding_type":"telegram_chat","external_id":"-100123456"}'
+```
+
+Supported `binding_type` values:
+- `slack_team`
+- `slack_user`
+- `telegram_chat`
+- `telegram_user`
 
 ## Live Mode Checklist
 Set the following for live deployment:
@@ -138,7 +225,7 @@ Set the following for live deployment:
 - `METABASE_URL=<your_metabase_url>`
 - `METABASE_API_KEY=<your_api_key>`
 - `RUN_STARTUP_CONNECTION_TESTS=true`
-- optionally set `ALLOW_REAL_QUERY_EXECUTION=true` only after readiness checks pass
+- set `ALLOW_REAL_QUERY_EXECUTION=true` only after readiness checks pass
 
 When `ALLOW_REAL_QUERY_EXECUTION=true`, startup validation enforces:
 - BigQuery mock mode is disabled
@@ -160,3 +247,13 @@ docker compose --env-file deploy/.env.live up --build -d
 ```bash
 curl -s http://localhost:8000/ready
 ```
+
+Postgres note:
+- The app now normalizes `postgres://` and `postgresql://` to `postgresql+psycopg://`.
+- Ensure `DATABASE_URL` points to your Railway Postgres service.
+
+## Rollback
+- Runbook: `deploy/ROLLBACK.md`
+- Scripts:
+  - `./scripts/deploy_release.sh deploy/.env.live`
+  - `./scripts/rollback_release.sh deploy/.env.live`

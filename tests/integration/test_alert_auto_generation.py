@@ -13,24 +13,16 @@ def test_auto_alert_generated_from_workflow_partial_failure() -> None:
     org = "org_auto_alert_partial"
     headers = {"X-Tenant-Id": org, "X-User-Role": "member"}
 
-    original = routes.workflow_service.run_profile_flow
-
-    def fake_partial(db, tenant_id, payload=None, workflow_id=None):
-        return {
-            "workflow_id": "wf_fake_partial",
-            "workflow_status": "partial_failure",
-            "failed_step": {"step": "profile_columns", "error": "permission_denied", "retry_count": 3},
-            "completed_steps": [],
-            "available_actions": [],
-        }
-
-    routes.workflow_service.run_profile_flow = fake_partial  # type: ignore[assignment]
+    old_mock_mode = routes.workflow_service.settings.bigquery_mock_mode
     try:
+        # Force a real-path partial failure: no live credentials while mock mode is disabled.
+        routes.workflow_service.settings.bigquery_mock_mode = False
         r = client.post("/api/v1/workflows/profile", params={"org_id": org}, headers=headers)
         assert r.status_code == 200
         assert r.json()["workflow_status"] == "partial_failure"
+        assert "missing_connection_credentials" in r.json()["failed_step"]["error"]
     finally:
-        routes.workflow_service.run_profile_flow = original  # type: ignore[assignment]
+        routes.workflow_service.settings.bigquery_mock_mode = old_mock_mode
 
     alerts = client.get("/api/v1/alerts", params={"org_id": org}, headers=headers)
     assert alerts.status_code == 200

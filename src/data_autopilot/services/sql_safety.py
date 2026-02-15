@@ -36,13 +36,13 @@ class SqlSafetyEngine:
         if DANGEROUS_COMMENT_PATTERN.search(sql):
             return SqlSafetyDecision(allowed=False, reasons=["Dangerous SQL found in comments"])
 
-        if sqlglot is None:
+        if sqlglot is None or exp is None:
             return self._evaluate_fallback(sql)
 
         try:
             parsed = sqlglot.parse(sql)
         except Exception:
-            return SqlSafetyDecision(allowed=False, reasons=["Invalid SQL"]) 
+            return SqlSafetyDecision(allowed=False, reasons=["Invalid SQL"])
 
         if len(parsed) != 1:
             return SqlSafetyDecision(allowed=False, reasons=["Multi-statement SQL is blocked"])
@@ -102,54 +102,44 @@ class SqlSafetyEngine:
 
     def _evaluate_fallback(self, sql: str) -> SqlSafetyDecision:
         stripped = sql.strip()
-        if DANGEROUS_COMMENT_PATTERN.search(stripped):
-            return SqlSafetyDecision(allowed=False, reasons=["Dangerous SQL found in comments"])
+        upper = stripped.upper()
         if ";" in stripped[:-1]:
             return SqlSafetyDecision(allowed=False, reasons=["Multi-statement SQL is blocked"])
-
-        upper_sql = stripped.upper()
-        blocked_keywords = ("CREATE ", "ALTER ", "DROP ", "TRUNCATE ", "INSERT ", "UPDATE ", "DELETE ", "MERGE ")
-        if upper_sql.startswith(blocked_keywords):
-            return SqlSafetyDecision(allowed=False, reasons=["Blocked non-SELECT operation"])
-
-        if not upper_sql.startswith("SELECT "):
+        if not upper.startswith("SELECT "):
             return SqlSafetyDecision(allowed=False, reasons=["Only SELECT queries are allowed"])
-
+        blocked_keywords = ("CREATE ", "ALTER ", "DROP ", "TRUNCATE ", "INSERT ", "UPDATE ", "DELETE ", "MERGE ")
+        if any(k in upper for k in blocked_keywords):
+            return SqlSafetyDecision(allowed=False, reasons=["Blocked non-SELECT operation"])
         for table, partition_col in self.partition_columns.items():
-            has_table = f" {table.upper()} " in f" {upper_sql} "
-            where_match = re.search(r"\bWHERE\b(.+)", upper_sql)
-            has_partition_in_where = bool(where_match and partition_col.upper() in where_match.group(1))
-            if has_table and not has_partition_in_where:
-                if " WHERE " in upper_sql:
-                    rewritten = f"{stripped} AND {partition_col} >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)"
-                else:
-                    rewritten = f"{stripped} WHERE {partition_col} >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)"
-                if " LIMIT " not in upper_sql:
+            if table.upper() in upper:
+                where_match = re.search(r"\bWHERE\b(.+)", upper)
+                has_partition_in_where = bool(where_match and partition_col.upper() in where_match.group(1))
+                if has_partition_in_where:
+                    continue
+                where = " WHERE " in upper
+                rewritten = (
+                    f"{stripped} AND {partition_col} >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)"
+                    if where
+                    else f"{stripped} WHERE {partition_col} >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)"
+                )
+                if " LIMIT " not in upper:
                     rewritten = f"{rewritten} LIMIT {self.default_limit}"
                 return SqlSafetyDecision(allowed=True, rewritten_sql=rewritten, reasons=["Partition filter auto-added"])
-
-        join_count = upper_sql.count(" JOIN ")
+        join_count = upper.count(" JOIN ")
         if join_count > self.max_join_depth:
             return SqlSafetyDecision(allowed=False, reasons=[f"Join depth exceeds max ({self.max_join_depth})"])
-
-        subquery_count = upper_sql.count("(SELECT")
+        subquery_count = upper.count("(SELECT")
         if subquery_count > self.max_subquery_depth:
             return SqlSafetyDecision(allowed=False, reasons=[f"Subquery nesting exceeds max ({self.max_subquery_depth})"])
-
-        has_aggregate = bool(re.search(r"\b(COUNT|SUM|AVG|MIN|MAX)\s*\(", upper_sql))
-        has_limit = bool(re.search(r"\bLIMIT\s+\d+", upper_sql))
+        has_aggregate = bool(re.search(r"\b(COUNT|SUM|AVG|MIN|MAX)\s*\(", upper))
+        has_limit = bool(re.search(r"\bLIMIT\s+\d+", upper))
         if not has_aggregate and not has_limit:
-            return SqlSafetyDecision(
-                allowed=True,
-                rewritten_sql=f"{stripped} LIMIT {self.default_limit}",
-                reasons=["LIMIT auto-added"],
-            )
+            return SqlSafetyDecision(allowed=True, rewritten_sql=f"{stripped} LIMIT {self.default_limit}", reasons=["LIMIT auto-added"])
         return SqlSafetyDecision(allowed=True, rewritten_sql=stripped)
 
     def _max_subquery_depth(self, root) -> int:
         if exp is None:
             return 0
-
         def walk(node, depth: int) -> int:
             max_depth = depth
             for child in node.iter_expressions():

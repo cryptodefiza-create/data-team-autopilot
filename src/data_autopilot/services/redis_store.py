@@ -94,3 +94,12 @@ class RedisStore:
             rows = self._client.zrangebyscore(key, min_score, max_score, withscores=True)
             return [(score, float(value)) for value, score in rows]
         return [(s, v) for s, v in self._zsets.get(key, []) if min_score <= s <= max_score]
+
+    def set_once(self, key: str, ttl_seconds: int) -> bool:
+        if self._client is not None:
+            return bool(self._client.set(key, "1", ex=ttl_seconds, nx=True))
+        self._cleanup()
+        if key in self._kv:
+            return False
+        self._kv[key] = _InMemValue(value="1", expires_at=time.time() + ttl_seconds)
+        return True

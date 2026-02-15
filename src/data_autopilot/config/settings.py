@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     simulate_llm_unavailable: bool = Field(default=False)
     simulate_warehouse_unavailable: bool = Field(default=False)
 
+    # Slack integration
+    slack_signing_secret: str = Field(default="")
+    slack_bot_token: str = Field(default="")
+    slack_default_org_id: str = Field(default="")
+
+    # Telegram integration
+    telegram_bot_token: str = Field(default="")
+    telegram_webhook_secret: str = Field(default="")
+    telegram_default_org_id: str = Field(default="")
+
     @model_validator(mode="after")
     def validate_runtime_modes(self) -> "Settings":
         # Hard safety gate: never allow real execution while connector is in mock mode.

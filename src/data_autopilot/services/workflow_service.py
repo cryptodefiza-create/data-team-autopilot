@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from hashlib import sha256
+import json
 from uuid import uuid4
 
 from sqlalchemy import delete, select
@@ -15,6 +16,7 @@ from data_autopilot.models.entities import (
     WorkflowStep,
 )
 from data_autopilot.services.bigquery_connector import BigQueryConnector
+from data_autopilot.services.connection_context import load_active_connection_credentials
 from data_autopilot.services.dashboard_service import DashboardService
 from data_autopilot.services.memo_service import MemoService
 
@@ -27,7 +29,7 @@ class WorkflowService:
         self.memo = MemoService()
 
     def _hash(self, payload: dict) -> str:
-        return sha256(repr(sorted(payload.items())).encode("utf-8")).hexdigest()
+        return sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
     def _upsert_step(
         self,
@@ -165,7 +167,6 @@ class WorkflowService:
         mode = str(conf.get("mode", "transient_error"))
         remaining = int(conf.get("remaining", 0))
         if payload.get("sampling") and mode == "timeout":
-            # Sampling mode is the recovery strategy for expensive timeout paths.
             return
         if remaining > 0:
             conf["remaining"] = remaining - 1
@@ -256,9 +257,9 @@ class WorkflowService:
             ],
             "failed_step": {"step": step_name, "error": error, "retry_count": retry_count},
             "available_actions": [
-                {"action": "retry", "description": "Try again with same parameters"},
-                {"action": "retry_with_sampling", "description": "Retry with sampling for heavy table operations"},
-                {"action": "skip_and_continue", "description": "Skip this step and continue where possible"},
+                {"action": "retry", "description": "Retry"},
+                {"action": "retry_with_sampling", "description": "Retry with sampling"},
+                {"action": "skip_and_continue", "description": "Skip this step and continue"},
             ],
         }
 
@@ -296,14 +297,19 @@ class WorkflowService:
     def run_profile_flow(self, db: Session, tenant_id: str, payload: dict | None = None, workflow_id: str | None = None) -> dict:
         flow_payload = payload or {}
         run = self._resume_or_start(db, tenant_id, "profile", workflow_id=workflow_id)
-        connection_id = f"conn_{tenant_id}"
+        connection_id, creds = load_active_connection_credentials(db, tenant_id=tenant_id)
+        if connection_id is None:
+            connection_id = f"conn_{tenant_id}"
+        if not self.settings.bigquery_mock_mode and creds is None:
+            self.finish(db, run, status="partial_failure")
+            return self._partial_failure_response(db, run, "introspect_schemas", "missing_connection_credentials", 0)
         try:
             schema = self._execute_step(
                 db,
                 run,
                 "introspect_schemas",
                 {"tenant_id": tenant_id, "connection_id": connection_id},
-                lambda: (self._maybe_fail("introspect_schemas", flow_payload), self.connector.introspect(connection_id=connection_id))[1],
+                lambda: (self._maybe_fail("introspect_schemas", flow_payload), self.connector.introspect(connection_id=connection_id, service_account_json=creds))[1],
             )
         except RuntimeError as exc:
             self.finish(db, run, status="partial_failure")
@@ -319,19 +325,23 @@ class WorkflowService:
         profiled_columns = 0
         for dataset, ds_payload in datasets.items():
             for table_name, table_payload in ds_payload["tables"].items():
+                row_count_est = int(table_payload.get("row_count_est", 0) or 0)
+                bytes_est = int(table_payload.get("bytes_est", 0) or 0)
+                freshness_hours = int(table_payload.get("freshness_hours", 0) or 0)
                 table = CatalogTable(
                     tenant_id=tenant_id,
                     connection_id=connection_id,
                     dataset=dataset,
                     table_name=table_name,
-                    row_count_est=50_000 if table_name != "events" else 5_000_000,
-                    bytes_est=5_000_000 if table_name != "events" else 900_000_000,
-                    freshness_hours=2,
+                    row_count_est=row_count_est,
+                    bytes_est=bytes_est,
+                    freshness_hours=freshness_hours,
                 )
                 db.add(table)
 
                 for col in table_payload["columns"]:
-                    pii_conf = 95 if col["name"] == "email" else 20
+                    col_name = str(col["name"]).lower()
+                    pii_conf = 95 if any(token in col_name for token in {"email", "phone", "ssn"}) else 20
                     db.add(
                         CatalogColumn(
                             tenant_id=tenant_id,
@@ -340,9 +350,9 @@ class WorkflowService:
                             table_name=table_name,
                             column_name=col["name"],
                             data_type=col["type"],
-                            null_pct=5,
-                            distinct_est=1000,
-                            is_pii=col["name"] == "email",
+                            null_pct=0 if col_name.endswith("_id") else 5,
+                            distinct_est=max(1000, min(1_000_000, row_count_est // 4 if row_count_est else 1000)),
+                            is_pii=pii_conf >= 80,
                             pii_confidence=pii_conf,
                         )
                     )
@@ -386,7 +396,25 @@ class WorkflowService:
                 self.finish(db, run, status="partial_failure")
                 return self._partial_failure_response(db, run, "detect_pii", str(exc), 3)
 
-        recommended = ["analytics.users", "analytics.events", "analytics.orders"]
+        recommended: list[str] = []
+        for dataset, ds_payload in datasets.items():
+            for table_name in ds_payload["tables"].keys():
+                full = f"{dataset}.{table_name}"
+                name = table_name.lower()
+                if any(token in name for token in {"user", "account", "member"}):
+                    recommended.append(full)
+                elif any(token in name for token in {"event", "click", "activity"}):
+                    recommended.append(full)
+                elif any(token in name for token in {"order", "transaction", "payment", "revenue"}):
+                    recommended.append(full)
+        if not recommended:
+            for dataset, ds_payload in datasets.items():
+                for table_name in ds_payload["tables"].keys():
+                    recommended.append(f"{dataset}.{table_name}")
+                    if len(recommended) >= 3:
+                        break
+                if len(recommended) >= 3:
+                    break
         try:
             self._execute_step(db, run, "recommend_starters", {}, lambda: {"recommended": recommended})
             self._execute_step(db, run, "store_catalog", {}, lambda: {"stored": True, "connection_id": connection_id})

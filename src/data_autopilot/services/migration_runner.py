@@ -115,7 +115,7 @@ class MigrationRunner:
                 # This check ensures core tenant-scoped tables are queryable for each tenant.
                 db.execute(text("SELECT COUNT(*) FROM workflow_runs WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
                 db.execute(text("SELECT COUNT(*) FROM artifacts WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
-            except Exception as exc:  # pragma: no cover - defensive path
+            except Exception as exc:  # pragma: no cover
                 errors.append(f"{tenant_id}: {exc}")
         return checked, errors
 

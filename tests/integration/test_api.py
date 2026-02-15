@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from data_autopilot.main import app
+from data_autopilot.api.state import agent_service
 
 
 client = TestClient(app)
@@ -28,3 +29,27 @@ def test_agent_run() -> None:
     assert r.status_code == 200
     body = r.json()
     assert body["response_type"] in {"query_result", "blocked"}
+
+
+def test_agent_run_real_execution_path_enabled() -> None:
+    org = "org_agent_real_path"
+    payload = {
+        "org_id": org,
+        "user_id": "user_1",
+        "message": "show me dau",
+        "session_id": "sess_real_1",
+    }
+    original = agent_service.settings.allow_real_query_execution
+    agent_service.settings.allow_real_query_execution = True
+    try:
+        r = client.post(
+            "/api/v1/agent/run",
+            json=payload,
+            headers={"X-Tenant-Id": org, "X-User-Role": "member"},
+        )
+    finally:
+        agent_service.settings.allow_real_query_execution = original
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["response_type"] in {"query_result", "blocked", "partial_failure"}

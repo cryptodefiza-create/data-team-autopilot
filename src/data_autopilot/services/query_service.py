@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from data_autopilot.config.settings import get_settings
 from data_autopilot.models.entities import QueryApproval
 from data_autopilot.services.bigquery_connector import BigQueryConnector
+from data_autopilot.services.connection_context import load_active_connection_credentials
 from data_autopilot.services.cost_limiter import SlidingWindowCostLimiter
 from data_autopilot.services.sql_safety import SqlSafetyEngine
 
@@ -26,7 +27,10 @@ class QueryService:
             return {"status": "blocked", "reasons": decision.reasons}
 
         rewritten = decision.rewritten_sql or sql
-        dry = self.connector.dry_run(rewritten)
+        _connection_id, creds = load_active_connection_credentials(db, tenant_id=tenant_id)
+        if not self.settings.bigquery_mock_mode and creds is None:
+            return {"status": "blocked", "reasons": ["No active BigQuery connection for tenant"]}
+        dry = self.connector.dry_run(rewritten, service_account_json=creds)
         estimated = int(dry.total_bytes_processed)
         est_cost_cents = int(round(dry.estimated_cost_usd * 100))
 
@@ -74,13 +78,7 @@ class QueryService:
             return {"status": "not_found"}
 
         if row.status == "executed":
-            return {
-                "status": "executed",
-                "preview_id": row.id,
-                "estimated_bytes": row.estimated_bytes,
-                "actual_bytes": row.actual_bytes,
-                "rows": row.output.get("rows", []),
-            }
+            return self._executed_response(row)
 
         if row.requires_approval and row.status != "approved":
             row.status = "approved"
@@ -88,7 +86,10 @@ class QueryService:
             db.add(row)
             db.commit()
 
-        result = self.connector.execute_query(row.sql)
+        _connection_id, creds = load_active_connection_credentials(db, tenant_id=tenant_id)
+        if not self.settings.bigquery_mock_mode and creds is None:
+            return {"status": "blocked", "reasons": ["No active BigQuery connection for tenant"]}
+        result = self.connector.execute_query(row.sql, service_account_json=creds)
         actual_bytes = int(result.get("actual_bytes", row.estimated_bytes))
         self.cost.record(tenant_id, actual_bytes)
 
@@ -99,6 +100,10 @@ class QueryService:
         db.add(row)
         db.commit()
         db.refresh(row)
+        return self._executed_response(row)
+
+    @staticmethod
+    def _executed_response(row: QueryApproval) -> dict:
         return {
             "status": "executed",
             "preview_id": row.id,

@@ -47,7 +47,7 @@ class DegradationService:
             "queue_id": row.id,
             "queue_position": position,
             "reason": reason,
-            "message": "Service temporarily unavailable. Request queued and will be processed later.",
+            "message": "Request queued.",
         }
 
     def fetch_queued(self, db: Session, workflow_type: str | None = None, tenant_id: str | None = None) -> list[WorkflowQueue]:

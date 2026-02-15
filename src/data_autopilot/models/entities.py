@@ -216,6 +216,23 @@ class QueryApproval(Base):
     executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class IntegrationBindingType(str, Enum):
+    SLACK_TEAM = "slack_team"
+    SLACK_USER = "slack_user"
+    TELEGRAM_CHAT = "telegram_chat"
+    TELEGRAM_USER = "telegram_user"
+
+
+class IntegrationBinding(Base):
+    __tablename__ = "integration_bindings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    binding_type: Mapped[IntegrationBindingType] = mapped_column(SAEnum(IntegrationBindingType), index=True)
+    external_id: Mapped[str] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class AlertSeverity(str, Enum):
     P0 = "P0"
     P1 = "P1"
