@@ -150,6 +150,7 @@ python scripts/load_test_inprocess.py --requests 200 --concurrency 10
 - `ALLOW_REAL_QUERY_EXECUTION` defaults to `false`.
 - Metabase runs in mock mode by default (`METABASE_MOCK_MODE=true`).
 - BigQuery runs in mock mode by default (`BIGQUERY_MOCK_MODE=true`).
+- LLM calls are disabled until `LLM_API_KEY` and `LLM_MODEL` are set.
 - Redis is optional in local dev; services use in-memory mode when Redis is unavailable.
 - Slack/TG requests are rejected unless secrets are configured:
   - `SLACK_SIGNING_SECRET`
@@ -160,6 +161,23 @@ python scripts/load_test_inprocess.py --requests 200 --concurrency 10
 - Open `http://localhost:8000/app`
 - Set org/user/role once; values persist in browser local storage
 - Use `Cmd/Ctrl + K` to open chat quickly
+
+### Chat UI (recommended for testers)
+- Open `http://localhost:8000/chat`
+- Ask in natural language:
+  - "Profile my warehouse"
+  - "Create an executive dashboard"
+  - "Generate my weekly memo"
+  - "Show me DAU for the last 14 days"
+- Chat endpoint: `POST /api/v1/chat/run`
+- LLM mode check: `GET /api/v1/llm/status` (`llm` or `fallback`)
+
+### Tester Console
+- Open `http://localhost:8000/tester`
+- Run profile/dashboard/memo workflows from UI
+- Run agent prompts and inspect outputs
+- View artifacts and latest payloads in one place
+- LLM mode is visible in the status card (`llm` vs `fallback`)
 
 ### Slack
 Set env:
@@ -226,6 +244,11 @@ Set the following for live deployment:
 - `METABASE_URL=<your_metabase_url>`
 - `METABASE_API_KEY=<your_api_key>`
 - `RUN_STARTUP_CONNECTION_TESTS=true`
+- `LLM_API_KEY=<provider_api_key>`
+- `LLM_MODEL=<model_name>`
+- optional: `LLM_API_BASE_URL=<provider_compatible_base_url>`
+- optional: `LLM_TIMEOUT_SECONDS=30`
+- optional: `LLM_TEMPERATURE=0`
 - set `ALLOW_REAL_QUERY_EXECUTION=true` only after readiness checks pass
 
 When `ALLOW_REAL_QUERY_EXECUTION=true`, startup validation enforces:

@@ -11,6 +11,7 @@ from data_autopilot.models.entities import ArtifactType, CatalogTable
 from data_autopilot.services.artifact_service import ArtifactService
 from data_autopilot.services.bigquery_connector import BigQueryConnector
 from data_autopilot.services.connection_context import load_active_connection_credentials
+from data_autopilot.services.llm_client import LLMClient
 
 
 @dataclass
@@ -24,6 +25,7 @@ class MemoService:
     def __init__(self) -> None:
         self.artifacts = ArtifactService()
         self.connector = BigQueryConnector()
+        self.llm = LLMClient()
 
     @staticmethod
     def _delta(current: float, previous: float) -> tuple[float, float]:
@@ -130,7 +132,7 @@ class MemoService:
             "anomaly_notes": anomaly_notes,
         }
 
-    def _generate_memo(self, packet: dict) -> dict:
+    def _generate_memo_fallback(self, packet: dict) -> dict:
         kpis = list(packet.get("kpis", []))
         if not kpis:
             return {
@@ -165,6 +167,35 @@ class MemoService:
             "recommended_actions": ["Review top acquisition channels for sustained growth drivers."],
             "data_quality_notes": packet["anomaly_notes"],
         }
+
+    def _generate_memo(self, packet: dict) -> dict:
+        if not self.llm.is_configured():
+            return self._generate_memo_fallback(packet)
+
+        system_prompt = (
+            "You are a data analyst writing a weekly executive memo. "
+            "Return only JSON with keys: headline_summary, key_changes, likely_causes, recommended_actions, data_quality_notes. "
+            "Use only values present in the packet. Never invent metrics."
+        )
+        user_prompt = (
+            "Create weekly memo from this packet:\n"
+            + json.dumps(packet, sort_keys=True)
+        )
+        try:
+            memo = self.llm.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            if not isinstance(memo.get("headline_summary"), list):
+                return self._generate_memo_fallback(packet)
+            if not isinstance(memo.get("key_changes"), list):
+                return self._generate_memo_fallback(packet)
+            if not isinstance(memo.get("likely_causes"), list):
+                return self._generate_memo_fallback(packet)
+            if not isinstance(memo.get("recommended_actions"), list):
+                return self._generate_memo_fallback(packet)
+            if not isinstance(memo.get("data_quality_notes"), list):
+                return self._generate_memo_fallback(packet)
+            return memo
+        except Exception:
+            return self._generate_memo_fallback(packet)
 
     def validate(self, packet: dict, memo: dict) -> ValidationResult:
         errors: list[str] = []

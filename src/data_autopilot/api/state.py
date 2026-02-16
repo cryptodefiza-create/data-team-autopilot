@@ -10,6 +10,7 @@ from data_autopilot.services.audit import AuditService
 from data_autopilot.services.bigquery_connector import BigQueryConnector
 from data_autopilot.services.channel_integrations import ChannelIntegrationsService
 from data_autopilot.services.connector_service import ConnectorService
+from data_autopilot.services.conversation_service import ConversationService
 from data_autopilot.services.degradation_service import DegradationService
 from data_autopilot.services.feedback_service import FeedbackService
 from data_autopilot.services.integration_binding_service import IntegrationBindingService
@@ -21,6 +22,7 @@ from data_autopilot.services.workflow_service import WorkflowService
 
 
 agent_service = AgentService()
+conversation_service = ConversationService()
 feedback_service = FeedbackService()
 workflow_service = WorkflowService()
 connector_service = ConnectorService()

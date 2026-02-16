@@ -25,6 +25,21 @@ class AgentResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class ChatRequest(BaseModel):
+    org_id: str
+    user_id: str
+    message: str = Field(min_length=1)
+    session_id: str | None = None
+
+
+class ChatResponse(BaseModel):
+    response_type: str
+    summary: str
+    data: dict[str, Any]
+    warnings: list[str] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
 class FeedbackRequest(BaseModel):
     tenant_id: str
     user_id: str
