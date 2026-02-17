@@ -4,12 +4,17 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+import logging
+
 from data_autopilot.config.settings import get_settings
 from data_autopilot.api.routes import router
 from data_autopilot.db.base import Base
 from data_autopilot.db.session import SessionLocal, engine
 from data_autopilot.services.audit import AuditService
+from data_autopilot.services.connector_service import ConnectorService
 from data_autopilot.services.runtime_checks import run_startup_checks
+
+logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
 
@@ -66,10 +71,24 @@ def _ensure_schema_compat() -> None:
 
 _ensure_schema_compat()
 
+def _ensure_default_connection() -> None:
+    """Auto-connect org_default to BigQuery on startup so the tester UI works immediately."""
+    db = SessionLocal()
+    try:
+        connector_service = ConnectorService()
+        connector_service.connect(db, org_id="org_default", service_account_json={})
+        logger.info("Auto-connected org_default to BigQuery")
+    except Exception as exc:
+        logger.warning("Auto-connect for org_default failed: %s", exc)
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings = get_settings()
     run_startup_checks(settings)
+    _ensure_default_connection()
     yield
 
 

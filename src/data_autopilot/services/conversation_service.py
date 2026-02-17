@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy.orm import Session
 
 from data_autopilot.agents.planner import Planner
+
+logger = logging.getLogger(__name__)
 from data_autopilot.services.degradation_service import DegradationService
 from data_autopilot.services.llm_client import LLMClient
 from data_autopilot.services.llm_cost_service import LLMCostService
@@ -56,8 +60,8 @@ class ConversationService:
                 if isinstance(sql_val, str):
                     sql = sql_val.strip()
                 return {"action": action, "sql": sql, "reason": str(parsed.get("reason", "")).strip()}
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.error("LLM intent classification failed: %s", exc, exc_info=True)
         return {"action": action, "sql": sql, "reason": "fallback_intent_classifier"}
 
     def _query_response(self, db: Session, tenant_id: str, message: str, suggested_sql: str) -> dict:
