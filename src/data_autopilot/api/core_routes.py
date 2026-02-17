@@ -523,6 +523,11 @@ def chat_shell() -> str:
 </html>"""
 
 
+@router.get("/tester-app", response_class=HTMLResponse)
+def tester_app_shell() -> str:
+    return _TESTER_APP_HTML
+
+
 @router.get('/health', response_model=HealthResponse)
 def health() -> HealthResponse:
     settings = get_settings()
@@ -857,6 +862,554 @@ def evaluate_memo_providers(
     )
 
     return {"org_id": org_id, "runs_per_provider": runs_per_provider, "results": results}
+
+
+_TESTER_APP_HTML = """\
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Data Team Autopilot — Tester</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: { sans: ['DM Sans', 'ui-sans-serif', 'system-ui'], mono: ['JetBrains Mono', 'monospace'] },
+          colors: { accent: { DEFAULT: '#10b981', light: '#34d399', dim: '#065f46' } }
+        }
+      }
+    }
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    .provider-grok { color: #60a5fa; }
+    .provider-gpt { color: #4ade80; }
+    .provider-claude { color: #fb923c; }
+    @keyframes pulse-dot { 0%,100% { opacity:.4; } 50% { opacity:1; } }
+    .loading-dot { animation: pulse-dot 1.2s ease-in-out infinite; }
+  </style>
+</head>
+<body class="dark bg-slate-950 text-slate-200 font-sans min-h-screen">
+<div x-data="testerApp()" x-init="init()" x-cloak class="flex flex-col h-screen">
+
+  <!-- ===== HEADER / STATUS BAR ===== -->
+  <header class="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 shrink-0">
+    <div class="flex items-center gap-3">
+      <h1 class="text-base font-bold text-white tracking-tight">Data Team Autopilot</h1>
+      <span class="text-xs bg-accent/20 text-accent px-2 py-0.5 rounded-full font-medium">Tester Preview</span>
+    </div>
+    <div class="flex items-center gap-4 text-xs">
+      <label class="flex items-center gap-1.5">
+        <span class="text-slate-400">Org</span>
+        <input x-model="orgId" @change="persistOrg()" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs w-28 text-slate-200 focus:outline-none focus:ring-1 focus:ring-accent" />
+      </label>
+      <div class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full" :class="status.llm_ok ? 'bg-accent' : 'bg-red-500'"></span>
+        <span class="text-slate-400">LLM:</span>
+        <span class="text-slate-200" x-text="status.llm_model || 'n/a'"></span>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full" :class="status.bq_ok ? 'bg-accent' : 'bg-red-500'"></span>
+        <span class="text-slate-400">BQ:</span>
+        <span class="text-slate-200" x-text="status.bq_mode"></span>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full" :class="status.mb_ok ? 'bg-accent' : 'bg-red-500'"></span>
+        <span class="text-slate-400">Metabase:</span>
+        <span class="text-slate-200" x-text="status.mb_mode"></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== MAIN TWO-PANEL AREA ===== -->
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- LEFT: Chat Panel -->
+    <div class="flex flex-col w-1/2 border-r border-slate-800 lg:w-[45%]">
+
+      <!-- Guided flow buttons -->
+      <div class="flex flex-wrap gap-2 px-4 pt-3 pb-2 border-b border-slate-800">
+        <button @click="sendGuided('Profile my warehouse and refresh the catalog')" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-full transition">Profile Warehouse</button>
+        <button @click="sendGuided('Create an executive dashboard from available tables')" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-full transition">Build Dashboard</button>
+        <button @click="sendGuided('Generate my weekly executive memo')" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-full transition">Generate Memo</button>
+        <button @click="sendGuided('Show me DAU for the last 14 days')" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-full transition">Free Chat</button>
+      </div>
+
+      <!-- Messages -->
+      <div id="chatMessages" class="flex-1 overflow-y-auto px-4 py-3 space-y-4 scrollbar-thin">
+        <template x-for="(msg, idx) in messages" :key="idx">
+          <div>
+            <!-- User message -->
+            <div x-show="msg.role === 'user'" class="flex justify-end">
+              <div class="bg-accent/20 text-accent-light rounded-xl rounded-br-sm px-4 py-2.5 max-w-[85%] text-sm whitespace-pre-wrap" x-text="msg.text"></div>
+            </div>
+            <!-- Assistant message -->
+            <div x-show="msg.role === 'assistant'" class="space-y-1">
+              <div class="bg-slate-800/80 border border-slate-700/50 rounded-xl rounded-bl-sm px-4 py-2.5 max-w-[90%] text-sm">
+                <div class="whitespace-pre-wrap" x-text="msg.text"></div>
+                <div x-show="msg.data" class="mt-2">
+                  <pre class="font-mono text-xs bg-slate-900 rounded-lg p-3 overflow-x-auto max-h-60 scrollbar-thin text-slate-300" x-text="msg.dataFormatted"></pre>
+                </div>
+              </div>
+              <!-- Meta line -->
+              <div x-show="msg.provider" class="flex items-center gap-3 text-[11px] text-slate-500 pl-1">
+                <span :class="providerColor(msg.provider)" x-text="msg.provider"></span>
+                <span x-text="msg.latency ? msg.latency + 'ms' : ''"></span>
+                <span x-text="msg.cost ? '$' + msg.cost : ''"></span>
+                <button @click="compareModel(msg)" class="text-slate-500 hover:text-accent transition text-[11px] underline">Compare Models</button>
+              </div>
+              <!-- Feedback -->
+              <div class="flex items-center gap-2 pl-1 mt-1">
+                <button @click="submitFeedback(msg, 'positive')" class="text-slate-600 hover:text-accent transition" :class="msg.feedbackType === 'positive' && 'text-accent'">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 00-6 0v4H5a2 2 0 00-2 2v1.2l1.9 7.6A2 2 0 006.8 22h6.4a2 2 0 001.9-1.2L17 13.2V11a2 2 0 00-2-2h-1z"/></svg>
+                </button>
+                <button @click="msg.showFeedbackForm = !msg.showFeedbackForm; submitFeedback(msg, 'negative')" class="text-slate-600 hover:text-red-400 transition" :class="msg.feedbackType === 'negative' && 'text-red-400'">
+                  <svg class="w-4 h-4 rotate-180" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 00-6 0v4H5a2 2 0 00-2 2v1.2l1.9 7.6A2 2 0 006.8 22h6.4a2 2 0 001.9-1.2L17 13.2V11a2 2 0 00-2-2h-1z"/></svg>
+                </button>
+                <div x-show="msg.showFeedbackForm" class="flex-1 max-w-xs">
+                  <input x-model="msg.feedbackComment" @keydown.enter="submitFeedbackComment(msg)" placeholder="What was wrong?" class="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-accent" />
+                </div>
+              </div>
+            </div>
+            <!-- Loading -->
+            <div x-show="msg.role === 'loading'" class="flex gap-1.5 pl-1">
+              <span class="w-2 h-2 bg-accent rounded-full loading-dot"></span>
+              <span class="w-2 h-2 bg-accent rounded-full loading-dot" style="animation-delay:.2s"></span>
+              <span class="w-2 h-2 bg-accent rounded-full loading-dot" style="animation-delay:.4s"></span>
+            </div>
+            <!-- Error -->
+            <div x-show="msg.role === 'error'" class="bg-red-950/40 border border-red-900/50 rounded-xl px-4 py-2.5 max-w-[90%] text-sm text-red-300">
+              <span x-text="msg.text"></span>
+              <button @click="retryMessage(msg)" class="ml-2 text-red-400 hover:text-red-300 underline text-xs">Retry</button>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Input bar -->
+      <div class="px-4 py-3 border-t border-slate-800 bg-slate-900/50 shrink-0">
+        <div class="flex gap-2">
+          <textarea x-model="input" @keydown.enter.prevent="if (!$event.shiftKey) sendMessage()" rows="2" placeholder="Ask a question..." class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 resize-none focus:outline-none focus:ring-1 focus:ring-accent placeholder-slate-500"></textarea>
+          <button @click="sendMessage()" :disabled="sending" class="bg-accent hover:bg-accent-light disabled:opacity-40 text-white rounded-lg px-4 py-2 text-sm font-medium transition shrink-0">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Context Panel -->
+    <div class="flex flex-col w-1/2 lg:w-[55%]">
+
+      <!-- Tabs -->
+      <div class="flex gap-1 px-3 pt-2 pb-1 border-b border-slate-800 overflow-x-auto shrink-0">
+        <template x-for="tab in contextTabs" :key="tab.id">
+          <button @click="activeTab = tab.id" class="text-xs px-3 py-1.5 rounded-full whitespace-nowrap transition" :class="activeTab === tab.id ? 'bg-accent text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'" x-text="tab.label"></button>
+        </template>
+      </div>
+
+      <!-- Tab content -->
+      <div class="flex-1 overflow-y-auto p-4 scrollbar-thin">
+
+        <!-- Dashboards -->
+        <div x-show="activeTab === 'dashboards'">
+          <h3 class="text-sm font-semibold text-slate-300 mb-3">Dashboards</h3>
+          <div x-show="artifacts.dashboards.length === 0" class="text-xs text-slate-500">No dashboard artifacts found. Run "Build Dashboard" from chat.</div>
+          <template x-for="a in artifacts.dashboards" :key="a.artifact_id">
+            <div class="bg-slate-800/60 border border-slate-700/40 rounded-lg p-3 mb-2">
+              <div class="flex justify-between items-center">
+                <span class="font-mono text-xs text-slate-300" x-text="a.artifact_id"></span>
+                <span class="text-[11px] text-slate-500" x-text="'v' + a.version"></span>
+              </div>
+              <div class="text-[11px] text-slate-500 mt-1" x-text="a.created_at"></div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Memos -->
+        <div x-show="activeTab === 'memos'">
+          <h3 class="text-sm font-semibold text-slate-300 mb-3">Memos</h3>
+          <div x-show="artifacts.memos.length === 0" class="text-xs text-slate-500">No memo artifacts found. Run "Generate Memo" from chat.</div>
+          <template x-for="a in artifacts.memos" :key="a.artifact_id">
+            <div class="bg-slate-800/60 border border-slate-700/40 rounded-lg p-3 mb-2">
+              <div class="flex justify-between items-center">
+                <span class="font-mono text-xs text-slate-300" x-text="a.artifact_id"></span>
+                <span class="text-[11px] text-slate-500" x-text="'v' + a.version"></span>
+              </div>
+              <div class="text-[11px] text-slate-500 mt-1" x-text="a.created_at"></div>
+              <button @click="loadMemoDetail(a.artifact_id)" class="text-[11px] text-accent hover:text-accent-light mt-1 underline">View Detail</button>
+            </div>
+          </template>
+          <div x-show="memoDetail">
+            <pre class="font-mono text-xs bg-slate-900 rounded-lg p-3 mt-3 overflow-auto max-h-80 scrollbar-thin text-slate-300" x-text="memoDetail"></pre>
+          </div>
+        </div>
+
+        <!-- Queries -->
+        <div x-show="activeTab === 'queries'">
+          <h3 class="text-sm font-semibold text-slate-300 mb-3">Queries</h3>
+          <div x-show="queries.length === 0" class="text-xs text-slate-500">Queries will appear here when chat returns query results.</div>
+          <template x-for="(q, qi) in queries" :key="qi">
+            <div class="bg-slate-800/60 border border-slate-700/40 rounded-lg p-3 mb-2">
+              <pre class="font-mono text-xs text-slate-300 whitespace-pre-wrap" x-text="q.sql || 'N/A'"></pre>
+              <div class="flex gap-3 mt-1 text-[11px] text-slate-500">
+                <span x-show="q.bytes_scanned" x-text="'Bytes: ' + q.bytes_scanned"></span>
+                <span x-show="q.cost" x-text="'Cost: $' + q.cost"></span>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Profile -->
+        <div x-show="activeTab === 'profile'">
+          <h3 class="text-sm font-semibold text-slate-300 mb-3">Warehouse Profile</h3>
+          <div x-show="artifacts.profiles.length === 0" class="text-xs text-slate-500">No profile artifacts found. Run "Profile Warehouse" from chat.</div>
+          <template x-for="a in artifacts.profiles" :key="a.artifact_id">
+            <div class="bg-slate-800/60 border border-slate-700/40 rounded-lg p-3 mb-2">
+              <div class="flex justify-between items-center">
+                <span class="font-mono text-xs text-slate-300" x-text="a.artifact_id"></span>
+                <span class="text-[11px] text-slate-500" x-text="'v' + a.version"></span>
+              </div>
+              <button @click="loadProfileDetail(a.artifact_id)" class="text-[11px] text-accent hover:text-accent-light mt-1 underline">View Catalog</button>
+            </div>
+          </template>
+          <div x-show="profileDetail">
+            <pre class="font-mono text-xs bg-slate-900 rounded-lg p-3 mt-3 overflow-auto max-h-80 scrollbar-thin text-slate-300" x-text="profileDetail"></pre>
+          </div>
+        </div>
+
+        <!-- Audit -->
+        <div x-show="activeTab === 'audit'">
+          <h3 class="text-sm font-semibold text-slate-300 mb-3">Audit Log</h3>
+          <div x-show="auditEntries.length === 0" class="text-xs text-slate-500">Audit entries will appear from chat response metadata.</div>
+          <template x-for="(entry, ei) in auditEntries" :key="ei">
+            <div class="bg-slate-800/60 border border-slate-700/40 rounded-lg p-3 mb-2 text-xs">
+              <div class="flex justify-between">
+                <span class="text-slate-300 font-medium" x-text="entry.event_type"></span>
+                <span class="text-slate-500" x-text="entry.timestamp"></span>
+              </div>
+              <pre class="font-mono text-[11px] text-slate-400 mt-1 whitespace-pre-wrap" x-text="entry.detail"></pre>
+            </div>
+          </template>
+        </div>
+
+        <!-- LLM Usage -->
+        <div x-show="activeTab === 'llm_usage'">
+          <h3 class="text-sm font-semibold text-slate-300 mb-3">LLM Usage &amp; Budget</h3>
+          <button @click="loadLLMUsage()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-full transition mb-3">Refresh</button>
+          <div x-show="llmUsage">
+            <div class="grid grid-cols-2 gap-3 mb-3">
+              <div class="bg-slate-800/60 border border-slate-700/40 rounded-lg p-3">
+                <div class="text-[11px] text-slate-500">Total Requests</div>
+                <div class="text-lg font-bold text-white" x-text="llmUsage?.total_requests ?? '-'"></div>
+              </div>
+              <div class="bg-slate-800/60 border border-slate-700/40 rounded-lg p-3">
+                <div class="text-[11px] text-slate-500">Est. Cost</div>
+                <div class="text-lg font-bold text-white" x-text="llmUsage?.total_estimated_cost_usd != null ? '$' + llmUsage.total_estimated_cost_usd.toFixed(4) : '-'"></div>
+              </div>
+            </div>
+            <div x-show="llmUsage?.by_provider" class="space-y-2">
+              <template x-for="(info, pname) in llmUsage?.by_provider || {}" :key="pname">
+                <div class="bg-slate-800/60 border border-slate-700/40 rounded-lg p-3 text-xs">
+                  <div class="font-medium text-slate-300" :class="providerColor(pname)" x-text="pname"></div>
+                  <div class="text-slate-500 mt-1">Model: <span class="text-slate-300" x-text="info.model"></span></div>
+                  <div class="text-slate-500">Requests: <span class="text-slate-300" x-text="info.request_count"></span> | In: <span class="text-slate-300" x-text="info.input_tokens"></span> | Out: <span class="text-slate-300" x-text="info.output_tokens"></span></div>
+                  <div class="text-slate-500">Cost: <span class="text-slate-300" x-text="'$' + info.estimated_cost_usd.toFixed(4)"></span></div>
+                </div>
+              </template>
+            </div>
+          </div>
+          <div x-show="llmBudget" class="mt-4 bg-slate-800/60 border border-slate-700/40 rounded-lg p-3">
+            <h4 class="text-xs font-semibold text-slate-300 mb-2">Budget Status</h4>
+            <div class="flex items-center gap-3 text-xs">
+              <span class="text-slate-500">Budget: <span class="text-slate-300" x-text="'$' + (llmBudget?.budget_usd ?? 0).toFixed(2)"></span></span>
+              <span class="text-slate-500">Used: <span class="text-slate-300" x-text="(llmBudget?.usage_pct ?? 0).toFixed(1) + '%'"></span></span>
+              <span class="text-slate-500">Remaining: <span class="text-slate-300" x-text="'$' + (llmBudget?.remaining_usd ?? 0).toFixed(4)"></span></span>
+              <span x-show="llmBudget?.over_budget" class="text-red-400 font-medium">OVER BUDGET</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Model Comparison -->
+        <div x-show="activeTab === 'comparison'">
+          <h3 class="text-sm font-semibold text-slate-300 mb-3">Model Comparison</h3>
+          <button @click="runMemoEval()" :disabled="evalRunning" class="text-xs bg-accent hover:bg-accent-light disabled:opacity-40 text-white px-3 py-1.5 rounded-full transition mb-3">
+            <span x-show="!evalRunning">Run Memo Evaluation</span>
+            <span x-show="evalRunning">Running...</span>
+          </button>
+          <div x-show="!evalResults && !evalRunning" class="text-xs text-slate-500">Click "Run Memo Evaluation" or "Compare Models" on a chat response to see side-by-side provider results.</div>
+          <div x-show="evalResults" class="grid grid-cols-1 gap-3">
+            <template x-for="(stats, pname) in evalResults || {}" :key="pname">
+              <div class="bg-slate-800/60 border border-slate-700/40 rounded-lg p-4">
+                <div class="flex justify-between items-center mb-2">
+                  <span class="font-semibold text-sm" :class="providerColor(pname)" x-text="pname"></span>
+                  <span class="text-[11px] text-slate-500" x-text="'Avg ' + stats.avg_latency_ms + 'ms'"></span>
+                </div>
+                <div class="grid grid-cols-3 gap-2 text-xs mb-2">
+                  <div><span class="text-slate-500">Runs:</span> <span class="text-slate-300" x-text="stats.runs"></span></div>
+                  <div><span class="text-slate-500">Valid JSON:</span> <span class="text-slate-300" x-text="stats.valid_json"></span></div>
+                  <div><span class="text-slate-500">Passed All:</span> <span class="text-slate-300" x-text="stats.passed_all_checks"></span></div>
+                  <div><span class="text-slate-500">Numbers:</span> <span class="text-slate-300" x-text="stats.passed_number_check"></span></div>
+                  <div><span class="text-slate-500">Metrics:</span> <span class="text-slate-300" x-text="stats.passed_metric_check"></span></div>
+                  <div><span class="text-slate-500">Coverage:</span> <span class="text-slate-300" x-text="stats.passed_coverage_check"></span></div>
+                </div>
+                <div class="text-[11px] text-slate-500">
+                  Tokens: <span class="text-slate-400" x-text="stats.total_input_tokens + ' in / ' + stats.total_output_tokens + ' out'"></span>
+                </div>
+                <template x-for="(err, ei) in stats.errors || []" :key="ei">
+                  <div class="text-[11px] text-red-400 mt-1" x-text="'Run ' + err.run + ': ' + err.error"></div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function testerApp() {
+  return {
+    orgId: localStorage.getItem('dta_org') || 'org_demo',
+    userId: 'tester_1',
+    sessionId: 'tester-' + Date.now(),
+    input: '',
+    sending: false,
+    messages: [],
+    queries: [],
+    auditEntries: [],
+    activeTab: 'dashboards',
+    contextTabs: [
+      { id: 'dashboards', label: 'Dashboards' },
+      { id: 'memos', label: 'Memos' },
+      { id: 'queries', label: 'Queries' },
+      { id: 'profile', label: 'Profile' },
+      { id: 'audit', label: 'Audit' },
+      { id: 'llm_usage', label: 'LLM Usage' },
+      { id: 'comparison', label: 'Model Comparison' },
+    ],
+    status: { llm_ok: false, llm_model: '', bq_ok: false, bq_mode: '...', mb_ok: false, mb_mode: '...' },
+    artifacts: { dashboards: [], memos: [], profiles: [] },
+    memoDetail: null,
+    profileDetail: null,
+    llmUsage: null,
+    llmBudget: null,
+    evalResults: null,
+    evalRunning: false,
+
+    hdrs() {
+      return { 'Content-Type': 'application/json', 'X-Tenant-Id': this.orgId, 'X-User-Role': 'admin' };
+    },
+
+    persistOrg() { localStorage.setItem('dta_org', this.orgId); },
+
+    async init() {
+      this.persistOrg();
+      await this.refreshStatus();
+      await this.refreshArtifacts();
+    },
+
+    async refreshStatus() {
+      try {
+        const [readyRes, llmRes] = await Promise.all([fetch('/ready'), fetch('/api/v1/llm/status')]);
+        const ready = await readyRes.json();
+        const llm = await llmRes.json();
+        this.status.bq_ok = ready.checks?.bigquery?.ok ?? false;
+        this.status.bq_mode = ready.checks?.bigquery?.mode ?? 'unknown';
+        this.status.mb_ok = ready.checks?.metabase?.ok ?? false;
+        this.status.mb_mode = ready.checks?.metabase?.mode ?? 'unknown';
+        this.status.llm_ok = llm.configured ?? false;
+        this.status.llm_model = llm.model || (llm.mode === 'fallback' ? 'fallback' : 'n/a');
+      } catch (e) { console.error('Status fetch failed', e); }
+    },
+
+    async refreshArtifacts() {
+      try {
+        const res = await fetch('/api/v1/artifacts?org_id=' + encodeURIComponent(this.orgId), { headers: this.hdrs() });
+        const data = await res.json();
+        const items = data.items || [];
+        this.artifacts.dashboards = items.filter(i => i.type === 'dashboard');
+        this.artifacts.memos = items.filter(i => i.type === 'memo');
+        this.artifacts.profiles = items.filter(i => i.type === 'profile');
+      } catch (e) { console.error('Artifacts fetch failed', e); }
+    },
+
+    async loadMemoDetail(id) {
+      try {
+        const res = await fetch('/api/v1/artifacts/' + encodeURIComponent(id) + '?org_id=' + encodeURIComponent(this.orgId), { headers: this.hdrs() });
+        const data = await res.json();
+        this.memoDetail = JSON.stringify(data, null, 2);
+      } catch (e) { this.memoDetail = 'Failed to load: ' + e; }
+    },
+
+    async loadProfileDetail(id) {
+      try {
+        const res = await fetch('/api/v1/artifacts/' + encodeURIComponent(id) + '?org_id=' + encodeURIComponent(this.orgId), { headers: this.hdrs() });
+        const data = await res.json();
+        this.profileDetail = JSON.stringify(data, null, 2);
+      } catch (e) { this.profileDetail = 'Failed to load: ' + e; }
+    },
+
+    async loadLLMUsage() {
+      const org = encodeURIComponent(this.orgId);
+      try {
+        const [uRes, bRes] = await Promise.all([
+          fetch('/api/v1/llm/usage?org_id=' + org, { headers: this.hdrs() }),
+          fetch('/api/v1/llm/budget?org_id=' + org, { headers: this.hdrs() }),
+        ]);
+        this.llmUsage = await uRes.json();
+        this.llmBudget = await bRes.json();
+      } catch (e) { console.error('LLM usage fetch failed', e); }
+    },
+
+    providerColor(name) {
+      if (!name) return 'text-slate-400';
+      const n = name.toLowerCase();
+      if (n.includes('grok') || n.includes('xai')) return 'provider-grok';
+      if (n.includes('gpt') || n.includes('openai')) return 'provider-gpt';
+      if (n.includes('claude') || n.includes('anthropic')) return 'provider-claude';
+      return 'text-slate-400';
+    },
+
+    sendGuided(text) { this.input = text; this.sendMessage(); },
+
+    async sendMessage() {
+      const text = this.input.trim();
+      if (!text || this.sending) return;
+      this.input = '';
+      this.messages.push({ role: 'user', text });
+      const loadIdx = this.messages.length;
+      this.messages.push({ role: 'loading' });
+      this.sending = true;
+      this.scrollChat();
+
+      const t0 = performance.now();
+      try {
+        const res = await fetch('/api/v1/chat/run', {
+          method: 'POST',
+          headers: this.hdrs(),
+          body: JSON.stringify({ org_id: this.orgId, user_id: this.userId, session_id: this.sessionId, message: text }),
+        });
+        const elapsed = Math.round(performance.now() - t0);
+        const data = await res.json();
+
+        if (!res.ok) {
+          this.messages[loadIdx] = { role: 'error', text: data.detail || JSON.stringify(data), originalText: text };
+          this.sending = false;
+          return;
+        }
+
+        const msg = {
+          role: 'assistant',
+          text: data.summary || 'Done.',
+          data: data.data,
+          dataFormatted: data.data ? JSON.stringify(data.data, null, 2) : null,
+          provider: data.meta?.provider || '',
+          latency: data.meta?.latency_ms || elapsed,
+          cost: data.meta?.estimated_cost ? data.meta.estimated_cost.toFixed(4) : null,
+          responseType: data.response_type,
+          meta: data.meta || {},
+          feedbackType: null,
+          showFeedbackForm: false,
+          feedbackComment: '',
+          artifactId: data.meta?.artifact_id || null,
+          artifactVersion: data.meta?.artifact_version || null,
+        };
+        this.messages[loadIdx] = msg;
+
+        // Populate queries tab
+        if (data.response_type === 'query_result' && data.data) {
+          this.queries.push({
+            sql: data.data.sql || data.data.query || null,
+            bytes_scanned: data.data.bytes_scanned || null,
+            cost: data.data.query_cost || null,
+          });
+        }
+
+        // Add audit entry
+        this.auditEntries.unshift({
+          event_type: 'chat_run',
+          timestamp: new Date().toISOString(),
+          detail: JSON.stringify({ response_type: data.response_type, intent: data.meta?.intent_action }, null, 2),
+        });
+
+        await this.refreshArtifacts();
+      } catch (e) {
+        this.messages[loadIdx] = { role: 'error', text: 'Request failed: ' + String(e), originalText: text };
+      }
+      this.sending = false;
+      this.scrollChat();
+    },
+
+    retryMessage(msg) {
+      if (msg.originalText) { this.input = msg.originalText; this.sendMessage(); }
+    },
+
+    async submitFeedback(msg, type) {
+      msg.feedbackType = type;
+      if (type === 'positive') msg.showFeedbackForm = false;
+      try {
+        await fetch('/api/v1/feedback', {
+          method: 'POST',
+          headers: this.hdrs(),
+          body: JSON.stringify({
+            tenant_id: this.orgId,
+            user_id: this.userId,
+            artifact_id: msg.artifactId || 'chat_response',
+            artifact_version: msg.artifactVersion || 1,
+            artifact_type: msg.responseType || 'chat',
+            feedback_type: type,
+            comment: msg.feedbackComment || null,
+            prompt_hash: msg.meta?.prompt_hash || null,
+          }),
+        });
+      } catch (e) { console.error('Feedback failed', e); }
+    },
+
+    async submitFeedbackComment(msg) {
+      msg.showFeedbackForm = false;
+      await this.submitFeedback(msg, 'negative');
+    },
+
+    async compareModel(msg) {
+      this.activeTab = 'comparison';
+      await this.runMemoEval();
+    },
+
+    async runMemoEval() {
+      this.evalRunning = true;
+      try {
+        const res = await fetch('/api/v1/llm/evaluate-memo', {
+          method: 'POST',
+          headers: this.hdrs(),
+          body: JSON.stringify({ org_id: this.orgId }),
+        });
+        const data = await res.json();
+        this.evalResults = data.results || null;
+      } catch (e) { console.error('Eval failed', e); }
+      this.evalRunning = false;
+    },
+
+    scrollChat() {
+      this.$nextTick(() => {
+        const el = document.getElementById('chatMessages');
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    },
+  };
+}
+</script>
+</body>
+</html>
+"""
 
 
 def _demo_memo_packet() -> dict:
