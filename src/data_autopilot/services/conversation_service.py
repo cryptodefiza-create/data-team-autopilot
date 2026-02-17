@@ -80,7 +80,16 @@ class ConversationService:
         if not sql:
             return {"response_type": "error", "summary": "Generated SQL was empty.", "data": {}, "warnings": []}
 
-        preview = self.query_service.preview(db, tenant_id=tenant_id, sql=sql)
+        try:
+            preview = self.query_service.preview(db, tenant_id=tenant_id, sql=sql)
+        except Exception as exc:
+            logger.error("Query preview failed: %s", exc, exc_info=True)
+            return {
+                "response_type": "error",
+                "summary": f"Query execution failed: {exc}",
+                "data": {"sql": sql},
+                "warnings": ["query_execution_error"],
+            }
         status = str(preview.get("status", "blocked"))
         if status == "blocked":
             return {
@@ -103,7 +112,16 @@ class ConversationService:
                 "warnings": [],
             }
 
-        execute = self.query_service.approve_and_run(db, tenant_id=tenant_id, preview_id=str(preview["preview_id"]))
+        try:
+            execute = self.query_service.approve_and_run(db, tenant_id=tenant_id, preview_id=str(preview["preview_id"]))
+        except Exception as exc:
+            logger.error("Query execution failed: %s", exc, exc_info=True)
+            return {
+                "response_type": "error",
+                "summary": f"Query execution failed: {exc}",
+                "data": {"sql": sql},
+                "warnings": ["query_execution_error"],
+            }
         return {
             "response_type": "query_result",
             "summary": "Query completed.",

@@ -45,15 +45,19 @@ def _call_provider(provider: LLMProvider, system_prompt: str, user_prompt: str) 
     try:
         base = provider.base_url.rstrip("/")
         url = f"{base}/chat/completions"
-        payload = {
+        system_prompt_with_json = system_prompt + " You MUST respond with valid JSON only, no markdown or extra text."
+        payload: dict = {
             "model": provider.model,
             "temperature": provider.temperature,
-            "response_format": {"type": "json_object"},
             "messages": [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": system_prompt_with_json},
                 {"role": "user", "content": user_prompt},
             ],
         }
+        # Only add response_format for providers known to support it (OpenAI-compatible)
+        # xAI/Grok does not support this parameter
+        if "x.ai" not in base and "grok" not in provider.model.lower():
+            payload["response_format"] = {"type": "json_object"}
         headers = {
             "Authorization": f"Bearer {provider.api_key}",
             "Content-Type": "application/json",
