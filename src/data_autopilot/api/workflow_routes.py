@@ -15,7 +15,6 @@ from data_autopilot.api.state import (
     auto_alert_from_memo_anomalies,
     auto_alert_from_workflow_result,
     degradation_service,
-    notification_service,
     workflow_service,
 )
 from data_autopilot.models.entities import AlertSeverity

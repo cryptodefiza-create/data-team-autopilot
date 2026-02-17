@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from data_autopilot.api import routes
+from data_autopilot.api.state import degradation_service, workflow_service
 from data_autopilot.db.session import SessionLocal
 from data_autopilot.main import app
 from data_autopilot.models.entities import CatalogTable
@@ -13,16 +13,16 @@ def test_auto_alert_generated_from_workflow_partial_failure() -> None:
     org = "org_auto_alert_partial"
     headers = {"X-Tenant-Id": org, "X-User-Role": "member"}
 
-    old_mock_mode = routes.workflow_service.settings.bigquery_mock_mode
+    old_mock_mode = workflow_service.settings.bigquery_mock_mode
     try:
         # Force a real-path partial failure: no live credentials while mock mode is disabled.
-        routes.workflow_service.settings.bigquery_mock_mode = False
+        workflow_service.settings.bigquery_mock_mode = False
         r = client.post("/api/v1/workflows/profile", params={"org_id": org}, headers=headers)
         assert r.status_code == 200
         assert r.json()["workflow_status"] == "partial_failure"
         assert "missing_connection_credentials" in r.json()["failed_step"]["error"]
     finally:
-        routes.workflow_service.settings.bigquery_mock_mode = old_mock_mode
+        workflow_service.settings.bigquery_mock_mode = old_mock_mode
 
     alerts = client.get("/api/v1/alerts", params={"org_id": org}, headers=headers)
     assert alerts.status_code == 200
@@ -65,7 +65,7 @@ def test_auto_alert_generated_on_dead_letter() -> None:
 
     db = SessionLocal()
     try:
-        routes.degradation_service.enqueue(
+        degradation_service.enqueue(
             db,
             tenant_id=org,
             workflow_type="memo",

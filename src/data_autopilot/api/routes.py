@@ -8,20 +8,14 @@ from data_autopilot.api.core_routes import router as core_router
 from data_autopilot.api.integration_routes import router as integration_router
 from data_autopilot.api.workflow_routes import router as workflow_router
 from data_autopilot.api.state import (
-    agent_service,
     alert_service,
     artifact_service,
     audit_service,
-    bigquery_connector,
     connector_service,
-    degradation_service,
-    feedback_service,
-    metabase_client,
     notification_service,
     query_service,
     tenant_admin_service,
     integration_binding_service,
-    workflow_service,
 )
 from data_autopilot.db.session import get_db
 from data_autopilot.models.entities import Role

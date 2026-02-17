@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 from uuid import uuid4
 
-from data_autopilot.api import routes
+from data_autopilot.api.state import degradation_service, workflow_service
 from data_autopilot.db.session import SessionLocal
 from data_autopilot.main import app
 from data_autopilot.models.entities import WorkflowDeadLetter, WorkflowQueue, WorkflowRun
@@ -43,7 +43,7 @@ def test_profile_flow_resume_from_partial_failure() -> None:
     org = "org_resume_profile"
     db = SessionLocal()
     try:
-        first = routes.workflow_service.run_profile_flow(
+        first = workflow_service.run_profile_flow(
             db,
             tenant_id=org,
             payload={"failure_modes": {"profile_columns": {"mode": "permission_denied", "remaining": 2}}},
@@ -51,7 +51,7 @@ def test_profile_flow_resume_from_partial_failure() -> None:
         assert first["workflow_status"] == "partial_failure"
         workflow_id = first["workflow_id"]
 
-        second = routes.workflow_service.run_profile_flow(db, tenant_id=org, workflow_id=workflow_id)
+        second = workflow_service.run_profile_flow(db, tenant_id=org, workflow_id=workflow_id)
         assert second["status"] == "success"
         assert second["workflow_id"] == workflow_id
         assert second["resumed"] is True
@@ -65,7 +65,7 @@ def test_dead_letter_after_three_failed_queue_attempts() -> None:
 
     db = SessionLocal()
     try:
-        queued = routes.degradation_service.enqueue(
+        queued = degradation_service.enqueue(
             db,
             tenant_id=org,
             workflow_type="memo",
@@ -100,14 +100,14 @@ def test_dead_letter_after_three_failed_queue_attempts() -> None:
 def test_queue_status_endpoint() -> None:
     org = "org_queue_status"
     headers = {"X-Tenant-Id": org, "X-User-Role": "member"}
-    old = routes.degradation_service.settings.simulate_llm_unavailable
-    routes.degradation_service.settings.simulate_llm_unavailable = True
+    old = degradation_service.settings.simulate_llm_unavailable
+    degradation_service.settings.simulate_llm_unavailable = True
     try:
         queued = client.post("/api/v1/workflows/memo", params={"org_id": org}, headers=headers)
         assert queued.status_code == 200
         assert queued.json()["workflow_status"] == "queued"
     finally:
-        routes.degradation_service.settings.simulate_llm_unavailable = old
+        degradation_service.settings.simulate_llm_unavailable = old
 
     status = client.get("/api/v1/workflows/queue", params={"org_id": org}, headers=headers)
     assert status.status_code == 200
@@ -122,7 +122,7 @@ def test_retry_with_sampling_action_applies_sampling_mode() -> None:
 
     db = SessionLocal()
     try:
-        first = routes.workflow_service.run_profile_flow(
+        first = workflow_service.run_profile_flow(
             db,
             tenant_id=org,
             payload={"failure_modes": {"profile_columns": {"mode": "timeout", "remaining": 10}}},
@@ -154,7 +154,7 @@ def test_skip_and_continue_action_marks_success() -> None:
 
     db = SessionLocal()
     try:
-        first = routes.workflow_service.run_profile_flow(
+        first = workflow_service.run_profile_flow(
             db,
             tenant_id=org,
             payload={"failure_modes": {"profile_columns": {"mode": "permission_denied", "remaining": 2}}},

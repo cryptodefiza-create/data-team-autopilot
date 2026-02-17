@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from data_autopilot.api import routes
+from data_autopilot.api.state import workflow_service
 from data_autopilot.db.session import SessionLocal
 from data_autopilot.main import app
 from data_autopilot.models.entities import WorkflowQueue, WorkflowRun
@@ -72,7 +72,7 @@ def test_tenant_purge_requires_admin_and_confirm() -> None:
 def test_process_queue_deferred_due_capacity_boundary() -> None:
     org = f"org_queue_capacity_{uuid4().hex[:8]}"
     headers = {"X-Tenant-Id": org, "X-User-Role": "member"}
-    max_wf = routes.workflow_service.settings.per_org_max_workflows
+    max_wf = workflow_service.settings.per_org_max_workflows
 
     db = SessionLocal()
     try:
@@ -147,7 +147,7 @@ def test_memo_output_matches_packet_values_and_hash_shape() -> None:
 def test_concurrent_profile_requests_when_capacity_saturated_queue_all() -> None:
     org = f"org_concurrent_queue_{uuid4().hex[:8]}"
     headers = {"X-Tenant-Id": org, "X-User-Role": "member"}
-    max_wf = routes.workflow_service.settings.per_org_max_workflows
+    max_wf = workflow_service.settings.per_org_max_workflows
 
     db = SessionLocal()
     try:

@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from data_autopilot.api import routes
+from data_autopilot.api.state import degradation_service
 from data_autopilot.main import app
 
 
@@ -33,8 +33,8 @@ def test_feedback_summary_endpoint() -> None:
 
 
 def test_workflow_queue_when_warehouse_unavailable() -> None:
-    old = routes.degradation_service.settings.simulate_warehouse_unavailable
-    routes.degradation_service.settings.simulate_warehouse_unavailable = True
+    old = degradation_service.settings.simulate_warehouse_unavailable
+    degradation_service.settings.simulate_warehouse_unavailable = True
     try:
         org = "org_queue"
         r = client.post(
@@ -47,19 +47,19 @@ def test_workflow_queue_when_warehouse_unavailable() -> None:
         assert body["workflow_status"] == "queued"
         assert body["reason"] == "warehouse_unavailable"
     finally:
-        routes.degradation_service.settings.simulate_warehouse_unavailable = old
+        degradation_service.settings.simulate_warehouse_unavailable = old
 
 
 def test_process_queue() -> None:
     org = "org_queue_process"
     headers = {"X-Tenant-Id": org, "X-User-Role": "member"}
-    old = routes.degradation_service.settings.simulate_llm_unavailable
-    routes.degradation_service.settings.simulate_llm_unavailable = True
+    old = degradation_service.settings.simulate_llm_unavailable
+    degradation_service.settings.simulate_llm_unavailable = True
     try:
         queued = client.post("/api/v1/workflows/memo", params={"org_id": org}, headers=headers).json()
         assert queued["workflow_status"] == "queued"
     finally:
-        routes.degradation_service.settings.simulate_llm_unavailable = old
+        degradation_service.settings.simulate_llm_unavailable = old
 
     processed = client.post("/api/v1/workflows/process-queue", params={"org_id": org}, headers=headers)
     assert processed.status_code == 200

@@ -24,9 +24,9 @@ def test_artifact_lineage_and_diff_endpoints() -> None:
 
     lineage = client.get(f"/api/v1/artifacts/{artifact_id}/lineage", params={"org_id": org}, headers=headers)
     assert lineage.status_code == 200
-    l = lineage.json()
-    assert len(l["nodes"]) >= 2
-    assert len(l["edges"]) >= 1
+    lin = lineage.json()
+    assert len(lin["nodes"]) >= 2
+    assert len(lin["edges"]) >= 1
 
     diff = client.get(f"/api/v1/artifacts/{artifact_id}/diff", params={"org_id": org}, headers=headers)
     assert diff.status_code == 200

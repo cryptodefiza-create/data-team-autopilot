@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      BIGQUERY_MOCK_MODE: "true"
+      METABASE_MOCK_MODE: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -e .[dev]
+      - name: Lint
+        run: ruff check src/ tests/
+      - name: Unit + integration tests
+        run: pytest --tb=short -q
+      - name: E2E smoke (in-process)
+        run: python scripts/e2e_smoke.py --in-process
+      - name: Load test (in-process)
+        run: python scripts/load_test_inprocess.py --requests 200 --concurrency 10
