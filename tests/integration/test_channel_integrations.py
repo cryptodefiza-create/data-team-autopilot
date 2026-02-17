@@ -217,6 +217,131 @@ def test_slack_team_binding_enforced_for_org_override() -> None:
         settings.slack_default_org_id = old_org
 
 
+def test_slack_command_routes_through_conversation_service() -> None:
+    """Verify Slack commands route through ConversationService and include intent metadata."""
+    from data_autopilot.models.entities import AuditLog
+    from data_autopilot.db.session import SessionLocal
+    from sqlalchemy import select
+
+    settings = channel_integrations_service.settings
+    old_secret = settings.slack_signing_secret
+    old_org = settings.slack_default_org_id
+    settings.slack_signing_secret = "conv-test"
+    settings.slack_default_org_id = "org_conv_slack"
+    try:
+        body = urlencode({"user_id": "U_CONV", "text": "build a dashboard"}).encode("utf-8")
+        ts = str(int(time.time()))
+        sig = _slack_signature(settings.slack_signing_secret, ts, body)
+        r = client.post(
+            "/integrations/slack/command",
+            content=body,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-Slack-Request-Timestamp": ts,
+                "X-Slack-Signature": sig,
+            },
+        )
+        assert r.status_code == 200
+        reply_text = r.json()["text"]
+        assert reply_text  # non-empty response
+
+        # Check audit log has intent_action metadata
+        db = SessionLocal()
+        try:
+            row = db.execute(
+                select(AuditLog)
+                .where(
+                    AuditLog.tenant_id == "org_conv_slack",
+                    AuditLog.event_type == "slack_command_processed",
+                )
+                .order_by(AuditLog.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            assert row is not None
+            assert "intent_action" in (row.payload or {})
+            assert (row.payload or {})["intent_action"] in {"query", "profile", "dashboard", "memo"}
+        finally:
+            db.close()
+    finally:
+        settings.slack_signing_secret = old_secret
+        settings.slack_default_org_id = old_org
+
+
+def test_telegram_routes_through_conversation_service() -> None:
+    """Verify Telegram messages route through ConversationService."""
+    from data_autopilot.models.entities import AuditLog
+    from data_autopilot.db.session import SessionLocal
+    from sqlalchemy import select
+
+    settings = channel_integrations_service.settings
+    old_secret = settings.telegram_webhook_secret
+    old_org = settings.telegram_default_org_id
+    settings.telegram_webhook_secret = "conv-tg"
+    settings.telegram_default_org_id = "org_conv_tg"
+    sent: list[dict] = []
+    old_send = channel_integrations_service.send_telegram_message
+    channel_integrations_service.send_telegram_message = lambda chat_id, text: sent.append(
+        {"chat_id": chat_id, "text": text}
+    )
+    payload = {
+        "message": {
+            "chat": {"id": 999},
+            "from": {"id": 888},
+            "text": "generate weekly memo",
+        }
+    }
+    try:
+        r = client.post(
+            "/integrations/telegram/webhook",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "conv-tg"},
+        )
+        assert r.status_code == 200
+        assert sent and sent[0]["text"]
+
+        db = SessionLocal()
+        try:
+            row = db.execute(
+                select(AuditLog)
+                .where(
+                    AuditLog.tenant_id == "org_conv_tg",
+                    AuditLog.event_type == "telegram_message_processed",
+                )
+                .order_by(AuditLog.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            assert row is not None
+            assert "intent_action" in (row.payload or {})
+        finally:
+            db.close()
+    finally:
+        channel_integrations_service.send_telegram_message = old_send
+        settings.telegram_webhook_secret = old_secret
+        settings.telegram_default_org_id = old_org
+
+
+def test_format_agent_result_handles_conversation_response_types() -> None:
+    """format_agent_result handles queued, approval_required, and workflow_result."""
+    fmt = channel_integrations_service.format_agent_result
+
+    queued = fmt({"response_type": "queued", "summary": "Dashboard queued.", "data": {}})
+    assert "queued" in queued.lower()
+
+    approval = fmt({
+        "response_type": "approval_required",
+        "summary": "Query needs approval.",
+        "data": {"estimated_cost_usd": 12.50, "preview_id": "prev_123"},
+    })
+    assert "$12.5" in approval
+    assert "prev_123" in approval
+
+    workflow = fmt({"response_type": "workflow_result", "summary": "Profile completed.", "data": {}})
+    assert "Profile completed." in workflow
+
+    with_warnings = fmt({"response_type": "query_result", "summary": "Done.", "data": {}, "warnings": ["slow_query"]})
+    assert "slow_query" in with_warnings
+
+
 def test_telegram_chat_binding_enforced_for_org_override() -> None:
     settings = channel_integrations_service.settings
     old_secret = settings.telegram_webhook_secret

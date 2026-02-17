@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from data_autopilot.api.state import (
-    agent_service,
     audit_service,
     channel_integrations_service,
+    conversation_service,
     integration_binding_service,
 )
 from data_autopilot.db.session import get_db
@@ -40,13 +40,17 @@ async def slack_command(request: Request, db: Session = Depends(get_db)) -> dict
     if not org_id or not prompt:
         raise HTTPException(status_code=403, detail="Slack identity is not bound to an org")
 
-    result = agent_service.run(db=db, org_id=org_id, user_id=f"slack:{user_id}", message=prompt)
+    result = conversation_service.respond(db=db, tenant_id=org_id, user_id=f"slack:{user_id}", message=prompt)
     reply = channel_integrations_service.format_agent_result(result)
     audit_service.log(
         db,
         tenant_id=org_id,
         event_type="slack_command_processed",
-        payload={"user_id": user_id, "response_type": result.get("response_type")},
+        payload={
+            "user_id": user_id,
+            "response_type": result.get("response_type"),
+            "intent_action": (result.get("meta") or {}).get("intent_action"),
+        },
     )
     return {"response_type": "ephemeral", "text": reply}
 
@@ -80,14 +84,18 @@ async def slack_events(request: Request, db: Session = Depends(get_db)) -> dict:
             if org_id and prompt:
                 channel = str(event.get("channel", ""))
                 thread_ts = str(event.get("thread_ts") or event.get("ts") or "")
-                result = agent_service.run(db=db, org_id=org_id, user_id=f"slack:{user_id}", message=prompt)
+                result = conversation_service.respond(db=db, tenant_id=org_id, user_id=f"slack:{user_id}", message=prompt)
                 reply = channel_integrations_service.format_agent_result(result)
                 channel_integrations_service.send_slack_message(channel, reply, thread_ts=thread_ts or None)
                 audit_service.log(
                     db,
                     tenant_id=org_id,
                     event_type="slack_event_processed",
-                    payload={"user_id": user_id, "event_type": event.get("type")},
+                    payload={
+                        "user_id": user_id,
+                        "event_type": event.get("type"),
+                        "intent_action": (result.get("meta") or {}).get("intent_action"),
+                    },
                 )
     return {"ok": True}
 
@@ -122,13 +130,18 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
         )
         return {"ok": True}
 
-    result = agent_service.run(db=db, org_id=org_id, user_id=f"tg:{sender}", message=prompt)
+    result = conversation_service.respond(db=db, tenant_id=org_id, user_id=f"tg:{sender}", message=prompt)
     reply = channel_integrations_service.format_agent_result(result)
     channel_integrations_service.send_telegram_message(chat_id, reply)
     audit_service.log(
         db,
         tenant_id=org_id,
         event_type="telegram_message_processed",
-        payload={"sender": sender, "chat_id": chat_id, "response_type": result.get("response_type")},
+        payload={
+            "sender": sender,
+            "chat_id": chat_id,
+            "response_type": result.get("response_type"),
+            "intent_action": (result.get("meta") or {}).get("intent_action"),
+        },
     )
     return {"ok": True}

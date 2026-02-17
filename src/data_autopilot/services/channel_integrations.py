@@ -71,13 +71,31 @@ class ChannelIntegrationsService:
     @staticmethod
     def format_agent_result(result: dict) -> str:
         summary = str(result.get("summary", ""))
+        response_type = str(result.get("response_type", ""))
         data = result.get("data", {})
-        rows = data.get("rows", []) if isinstance(data, dict) else []
+        if not isinstance(data, dict):
+            data = {}
+
+        if response_type == "approval_required":
+            est = data.get("estimated_cost_usd", "?")
+            preview_id = data.get("preview_id", "")
+            return f"{summary}\nEstimated cost: ${est}\nApprove via preview_id: {preview_id}"
+
+        if response_type == "queued":
+            return f"{summary}\nYour request has been queued and will run when capacity is available."
+
+        rows = data.get("rows", [])
         if rows:
             return f"{summary}\nRows: {len(rows)}"
-        reasons = data.get("reasons", []) if isinstance(data, dict) else []
+
+        reasons = data.get("reasons", [])
         if reasons:
             return f"{summary}\nReason: {', '.join(str(r) for r in reasons)}"
+
+        warnings = result.get("warnings", [])
+        if warnings:
+            return f"{summary}\nWarnings: {', '.join(str(w) for w in warnings)}"
+
         return summary or "Completed."
 
     def send_slack_message(self, channel: str, text: str, thread_ts: str | None = None) -> None:
