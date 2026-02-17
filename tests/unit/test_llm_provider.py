@@ -80,3 +80,69 @@ def test_llm_client_with_explicit_provider() -> None:
 def test_get_eval_providers_empty_by_default() -> None:
     providers = get_eval_providers()
     assert providers == []
+
+
+def test_get_eval_providers_from_dedicated_env_vars(monkeypatch) -> None:
+    """Dedicated env vars (GPT5_MINI_*, CLAUDE_SONNET_*) produce providers."""
+    from data_autopilot.config.settings import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "llm_eval_enabled", True)
+    monkeypatch.setattr(settings, "gpt5_mini_enabled", True)
+    monkeypatch.setattr(settings, "gpt5_mini_api_key", "sk-test-gpt5")
+    monkeypatch.setattr(settings, "gpt5_mini_model", "gpt-5-mini")
+    monkeypatch.setattr(settings, "gpt5_mini_base_url", "https://api.openai.com/v1")
+    monkeypatch.setattr(settings, "claude_sonnet_enabled", True)
+    monkeypatch.setattr(settings, "claude_sonnet_api_key", "sk-test-claude")
+    monkeypatch.setattr(settings, "claude_sonnet_model", "claude-sonnet-4-5-20250929")
+    monkeypatch.setattr(settings, "claude_sonnet_base_url", "https://api.anthropic.com/v1")
+    monkeypatch.setattr(settings, "llm_eval_providers_json", "[]")
+
+    providers = get_eval_providers()
+    assert len(providers) == 2
+    names = [p.name for p in providers]
+    assert "gpt5_mini" in names
+    assert "claude_sonnet" in names
+
+    gpt = next(p for p in providers if p.name == "gpt5_mini")
+    assert gpt.api_key == "sk-test-gpt5"
+    assert gpt.model == "gpt-5-mini"
+
+    claude = next(p for p in providers if p.name == "claude_sonnet")
+    assert claude.api_key == "sk-test-claude"
+    assert claude.model == "claude-sonnet-4-5-20250929"
+
+
+def test_get_eval_providers_skips_disabled(monkeypatch) -> None:
+    """Disabled dedicated providers are not included."""
+    from data_autopilot.config.settings import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "llm_eval_enabled", True)
+    monkeypatch.setattr(settings, "gpt5_mini_enabled", False)
+    monkeypatch.setattr(settings, "gpt5_mini_api_key", "sk-test")
+    monkeypatch.setattr(settings, "claude_sonnet_enabled", True)
+    monkeypatch.setattr(settings, "claude_sonnet_api_key", "")  # no key
+    monkeypatch.setattr(settings, "llm_eval_providers_json", "[]")
+
+    providers = get_eval_providers()
+    assert len(providers) == 0
+
+
+def test_get_eval_providers_combines_dedicated_and_json(monkeypatch) -> None:
+    """Dedicated providers + JSON providers are merged."""
+    import json
+    from data_autopilot.config.settings import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "llm_eval_enabled", True)
+    monkeypatch.setattr(settings, "gpt5_mini_enabled", True)
+    monkeypatch.setattr(settings, "gpt5_mini_api_key", "sk-gpt5")
+    monkeypatch.setattr(settings, "llm_eval_providers_json", json.dumps([
+        {"name": "custom", "base_url": "http://localhost:8000", "api_key": "k", "model": "m"},
+    ]))
+
+    providers = get_eval_providers()
+    names = [p.name for p in providers]
+    assert "gpt5_mini" in names
+    assert "custom" in names

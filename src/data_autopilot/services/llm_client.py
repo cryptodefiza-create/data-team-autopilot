@@ -151,15 +151,39 @@ class LLMClient:
 
 
 def get_eval_providers() -> list[LLMProvider]:
-    """Parse evaluation providers from settings."""
+    """Build evaluation providers from dedicated env vars + legacy JSON override."""
     settings = get_settings()
     if not settings.llm_eval_enabled:
         return []
+
+    providers: list[LLMProvider] = []
+
+    # --- Dedicated env-var providers (preferred for Railway / simple deploys) ---
+    if settings.gpt5_mini_enabled and settings.gpt5_mini_api_key:
+        providers.append(
+            LLMProvider(
+                name="gpt5_mini",
+                base_url=settings.gpt5_mini_base_url,
+                api_key=settings.gpt5_mini_api_key,
+                model=settings.gpt5_mini_model,
+            )
+        )
+
+    if settings.claude_sonnet_enabled and settings.claude_sonnet_api_key:
+        providers.append(
+            LLMProvider(
+                name="claude_sonnet",
+                base_url=settings.claude_sonnet_base_url,
+                api_key=settings.claude_sonnet_api_key,
+                model=settings.claude_sonnet_model,
+            )
+        )
+
+    # --- Legacy JSON override (additional providers beyond the two built-in) ---
     try:
         raw = json.loads(settings.llm_eval_providers_json)
     except (json.JSONDecodeError, TypeError):
-        return []
-    providers: list[LLMProvider] = []
+        raw = []
     for entry in raw:
         if not isinstance(entry, dict):
             continue
@@ -178,4 +202,5 @@ def get_eval_providers() -> list[LLMProvider]:
             )
         except (KeyError, ValueError):
             continue
+
     return providers

@@ -45,13 +45,22 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = Field(default=30)
     llm_temperature: float = Field(default=0.0)
 
-    # LLM — evaluation providers (run in parallel for A/B comparison)
+    # LLM — GPT-5 Mini (evaluation provider)
+    gpt5_mini_api_key: str = Field(default="")
+    gpt5_mini_model: str = Field(default="gpt-5-mini")
+    gpt5_mini_base_url: str = Field(default="https://api.openai.com/v1")
+    gpt5_mini_enabled: bool = Field(default=False)
+
+    # LLM — Claude Sonnet (evaluation provider)
+    claude_sonnet_api_key: str = Field(default="")
+    claude_sonnet_model: str = Field(default="claude-sonnet-4-5-20250929")
+    claude_sonnet_base_url: str = Field(default="https://api.anthropic.com/v1")
+    claude_sonnet_enabled: bool = Field(default=False)
+
+    # LLM — evaluation (legacy JSON override still supported)
     llm_eval_providers_json: str = Field(
         default="[]",
-        description=(
-            'JSON array of evaluation providers. Each entry: '
-            '{"name": "...", "base_url": "...", "api_key": "...", "model": "...", "enabled": true}'
-        ),
+        description="Optional JSON array of additional eval providers beyond GPT-5 Mini and Claude Sonnet",
     )
     llm_eval_enabled: bool = Field(default=False, description="Enable parallel evaluation runs")
     llm_monthly_budget_usd: float = Field(default=100.0, description="Per-org monthly LLM budget soft cap in USD")
