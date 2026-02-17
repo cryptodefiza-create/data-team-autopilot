@@ -280,31 +280,58 @@ def tester_shell() -> str:
       `;
     }
 
+    let wfBusy = false;
     async function runWorkflow(kind) {
-      const org = encodeURIComponent(orgEl.value.trim());
-      const res = await fetch(`/api/v1/workflows/${kind}?org_id=${org}`, {
-        method: "POST",
-        headers: headers()
-      });
-      const body = await res.json();
-      wfOut.textContent = JSON.stringify(body, null, 2);
-      await refreshArtifacts();
+      if (wfBusy) return;
+      wfBusy = true;
+      document.querySelectorAll("[data-wf]").forEach(b => { b.disabled = true; });
+      wfOut.textContent = "Running " + kind + "...";
+      try {
+        const org = encodeURIComponent(orgEl.value.trim());
+        const res = await fetch(`/api/v1/workflows/${kind}?org_id=${org}`, {
+          method: "POST",
+          headers: headers()
+        });
+        const body = await res.json();
+        wfOut.textContent = JSON.stringify(body, null, 2);
+        await refreshArtifacts();
+      } catch (err) {
+        wfOut.textContent = "Error: " + String(err);
+      } finally {
+        wfBusy = false;
+        document.querySelectorAll("[data-wf]").forEach(b => { b.disabled = false; });
+      }
     }
 
+    let chatBusy = false;
     async function runChat() {
-      const body = {
-        org_id: orgEl.value.trim(),
-        user_id: userEl.value.trim() || "tester_1",
-        session_id: "tester-" + Date.now(),
-        message: document.getElementById("prompt").value.trim()
-      };
-      const res = await fetch("/api/v1/chat/run", {
-        method: "POST",
-        headers: headers(),
-        body: JSON.stringify(body)
-      });
-      const json = await res.json();
-      chatOut.textContent = JSON.stringify(json, null, 2);
+      if (chatBusy) return;
+      chatBusy = true;
+      const chatBtn = document.getElementById("runChat");
+      chatBtn.disabled = true;
+      chatBtn.textContent = "Sending...";
+      chatOut.textContent = "Working...";
+      try {
+        const body = {
+          org_id: orgEl.value.trim(),
+          user_id: userEl.value.trim() || "tester_1",
+          session_id: "tester-" + Date.now(),
+          message: document.getElementById("prompt").value.trim()
+        };
+        const res = await fetch("/api/v1/chat/run", {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify(body)
+        });
+        const json = await res.json();
+        chatOut.textContent = JSON.stringify(json, null, 2);
+      } catch (err) {
+        chatOut.textContent = "Error: " + String(err);
+      } finally {
+        chatBusy = false;
+        chatBtn.disabled = false;
+        chatBtn.textContent = "Send Prompt";
+      }
     }
 
     async function refreshArtifacts() {
@@ -472,9 +499,14 @@ def chat_shell() -> str:
       return summary + "\\n\\n" + details;
     }
 
+    let sendingChat = false;
     async function sendPrompt() {
       const message = promptEl.value.trim();
-      if (!message) return;
+      if (!message || sendingChat) return;
+      sendingChat = true;
+      const sendBtn = document.getElementById("send");
+      sendBtn.disabled = true;
+      sendBtn.textContent = "Sending...";
       appendMsg("user", message);
       promptEl.value = "";
       appendMsg("bot", "Working...");
@@ -495,6 +527,10 @@ def chat_shell() -> str:
         chat.children[loadingIndex].textContent = formatAssistantResponse(data);
       } catch (err) {
         chat.children[loadingIndex].textContent = "Request failed: " + String(err);
+      } finally {
+        sendingChat = false;
+        sendBtn.disabled = false;
+        sendBtn.textContent = "Send";
       }
     }
 
