@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from data_autopilot.agents.planner import Planner
 from data_autopilot.services.degradation_service import DegradationService
 from data_autopilot.services.llm_client import LLMClient
+from data_autopilot.services.llm_cost_service import LLMCostService
 from data_autopilot.services.query_service import QueryService
 from data_autopilot.services.workflow_service import WorkflowService
 
@@ -16,6 +17,7 @@ class ConversationService:
         self.query_service = QueryService()
         self.workflow_service = WorkflowService()
         self.degradation = DegradationService()
+        self.cost_service = LLMCostService()
 
     @staticmethod
     def _fallback_action(message: str) -> str:
@@ -28,7 +30,7 @@ class ConversationService:
             return "memo"
         return "query"
 
-    def _interpret(self, message: str) -> dict:
+    def _interpret(self, db: Session, tenant_id: str, message: str) -> dict:
         action = self._fallback_action(message)
         sql = ""
         if self.llm.is_configured():
@@ -40,7 +42,13 @@ class ConversationService:
             )
             user_prompt = f"Request: {message}"
             try:
-                parsed = self.llm.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
+                result = self.llm.generate_json_with_meta(system_prompt=system_prompt, user_prompt=user_prompt)
+                self.cost_service.record(
+                    db, tenant_id=tenant_id, result=result, task_type="intent_classification",
+                )
+                if not result.succeeded:
+                    raise RuntimeError(result.error)
+                parsed = result.content
                 candidate = str(parsed.get("action", "")).strip().lower()
                 if candidate in {"query", "profile", "dashboard", "memo"}:
                     action = candidate
@@ -100,7 +108,7 @@ class ConversationService:
         }
 
     def respond(self, db: Session, tenant_id: str, user_id: str, message: str) -> dict:
-        interpreted = self._interpret(message)
+        interpreted = self._interpret(db, tenant_id, message)
         action = interpreted["action"]
         result: dict
         if action == "query":

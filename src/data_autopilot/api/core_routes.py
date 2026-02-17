@@ -560,6 +560,40 @@ def llm_status() -> dict:
     }
 
 
+@router.get('/api/v1/llm/usage')
+def llm_usage(
+    org_id: str,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(tenant_from_headers),
+    role: Role = Depends(role_from_headers),
+) -> dict:
+    """Per-org LLM token usage and cost summary by provider."""
+    from data_autopilot.services.llm_cost_service import LLMCostService
+
+    ensure_tenant_scope(tenant_id, org_id)
+    require_member_or_admin(role)
+    svc = LLMCostService()
+    return svc.get_usage_summary(db, tenant_id=org_id)
+
+
+@router.get('/api/v1/llm/budget')
+def llm_budget(
+    org_id: str,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(tenant_from_headers),
+    role: Role = Depends(role_from_headers),
+) -> dict:
+    """Current LLM budget status for an org."""
+    from data_autopilot.services.llm_cost_service import LLMCostService
+    from dataclasses import asdict
+
+    ensure_tenant_scope(tenant_id, org_id)
+    require_member_or_admin(role)
+    svc = LLMCostService()
+    status = svc.get_budget_status(db, tenant_id=org_id)
+    return asdict(status)
+
+
 @router.post('/api/v1/agent/run', response_model=AgentResponse)
 def run_agent(
     req: AgentRequest,

@@ -54,6 +54,7 @@ class Settings(BaseSettings):
         ),
     )
     llm_eval_enabled: bool = Field(default=False, description="Enable parallel evaluation runs")
+    llm_monthly_budget_usd: float = Field(default=100.0, description="Per-org monthly LLM budget soft cap in USD")
 
     # Slack integration
     slack_signing_secret: str = Field(default="")
