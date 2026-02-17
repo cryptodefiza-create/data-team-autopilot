@@ -51,5 +51,5 @@ def test_memo_validation_downgrades_unsupported_data_supported_cause() -> None:
     }
     result = svc.validate(packet, memo)
     assert result.passed
-    assert any("Downgrading unsupported" in w for w in result.warnings)
+    assert any("Downgraded unsupported" in w for w in result.warnings)
     assert memo["likely_causes"][0]["evidence_type"] == "speculative"

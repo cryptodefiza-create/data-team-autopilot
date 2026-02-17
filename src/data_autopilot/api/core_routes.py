@@ -684,3 +684,188 @@ def list_eval_runs(
         })
 
     return {"org_id": org_id, "count": len(items), "items": items}
+
+
+@router.post('/api/v1/llm/evaluate-memo')
+def evaluate_memo_providers(
+    req: dict,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(tenant_from_headers),
+    role: Role = Depends(role_from_headers),
+) -> dict:
+    """Run memo generation across primary + eval providers and score validation.
+
+    Accepts optional `packet` (uses demo packet if omitted) and
+    `runs_per_provider` (default 1, max 50).
+    """
+    from data_autopilot.security.rbac import require_admin
+    from data_autopilot.services.memo_service import (
+        MemoService,
+        validate_causes,
+        validate_coverage,
+        validate_metric_names,
+        validate_numbers,
+    )
+    from data_autopilot.services.llm_client import LLMClient, get_eval_providers
+
+    org_id = str(req.get("org_id", tenant_id))
+    ensure_tenant_scope(tenant_id, org_id)
+    require_admin(role)
+
+    runs_per_provider = min(int(req.get("runs_per_provider", 1)), 50)
+
+    packet = req.get("packet")
+    if not packet:
+        packet = _demo_memo_packet()
+
+    svc = MemoService()
+    primary_client = LLMClient()
+    eval_providers = get_eval_providers()
+
+    # Build list of (name, LLMClient) pairs to evaluate
+    clients: list[tuple[str, LLMClient]] = []
+    if primary_client.is_configured():
+        p = primary_client.provider
+        clients.append((p.name if p else "primary", primary_client))
+    for ep in eval_providers:
+        clients.append((ep.name, LLMClient(provider=ep)))
+
+    if not clients:
+        return {
+            "org_id": org_id,
+            "error": "No LLM providers configured. Set LLM_API_KEY or enable eval providers.",
+            "results": {},
+        }
+
+    import json as _json
+    import time
+
+    results: dict[str, dict] = {}
+    for provider_name, client in clients:
+        stats = {
+            "runs": runs_per_provider,
+            "valid_json": 0,
+            "passed_number_check": 0,
+            "passed_metric_check": 0,
+            "passed_coverage_check": 0,
+            "passed_cause_check": 0,
+            "passed_all_checks": 0,
+            "total_latency_ms": 0.0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "errors": [],
+            "samples": [],
+        }
+
+        system_prompt = svc._build_system_prompt()
+        user_prompt = "Create weekly memo from this packet:\n" + _json.dumps(packet, sort_keys=True)
+
+        for i in range(runs_per_provider):
+            t0 = time.perf_counter()
+            result = client.generate_json_with_meta(system_prompt, user_prompt)
+            elapsed = (time.perf_counter() - t0) * 1000
+            stats["total_latency_ms"] += elapsed
+            stats["total_input_tokens"] += result.input_tokens
+            stats["total_output_tokens"] += result.output_tokens
+
+            if not result.succeeded:
+                stats["errors"].append({"run": i + 1, "error": result.error})
+                continue
+
+            memo = result.content
+            # Check structure
+            is_valid = all(
+                isinstance(memo.get(k), list)
+                for k in ("headline_summary", "key_changes", "likely_causes", "recommended_actions", "data_quality_notes")
+            )
+            if is_valid:
+                stats["valid_json"] += 1
+            else:
+                stats["errors"].append({"run": i + 1, "error": "Invalid JSON structure"})
+                continue
+
+            num_errs = validate_numbers(memo, packet)
+            metric_errs = validate_metric_names(memo, packet)
+            cov_warns = validate_coverage(memo, packet)
+            cause_errs = validate_causes(memo, packet)
+
+            if not num_errs:
+                stats["passed_number_check"] += 1
+            if not metric_errs:
+                stats["passed_metric_check"] += 1
+            if not cov_warns:
+                stats["passed_coverage_check"] += 1
+            if not cause_errs:
+                stats["passed_cause_check"] += 1
+            if not any([num_errs, metric_errs, cov_warns, cause_errs]):
+                stats["passed_all_checks"] += 1
+
+            if len(stats["samples"]) < 3:
+                stats["samples"].append({
+                    "run": i + 1,
+                    "number_errors": num_errs,
+                    "metric_errors": metric_errs,
+                    "coverage_warnings": cov_warns,
+                    "cause_errors": cause_errs,
+                    "latency_ms": round(elapsed, 2),
+                    "memo_keys": list(memo.keys()),
+                })
+
+        stats["avg_latency_ms"] = round(stats["total_latency_ms"] / runs_per_provider, 2)
+        results[provider_name] = stats
+
+    # Store results in audit log
+    audit_service.log(
+        db,
+        tenant_id=org_id,
+        event_type="memo_provider_evaluation",
+        payload={"runs_per_provider": runs_per_provider, "results": results},
+    )
+
+    return {"org_id": org_id, "runs_per_provider": runs_per_provider, "results": results}
+
+
+def _demo_memo_packet() -> dict:
+    """Standard demo packet for memo evaluation when no real data is available."""
+    return {
+        "generated_at": "2026-02-17T00:00:00Z",
+        "time_window": {
+            "current": {"start": "2026-02-10", "end": "2026-02-16"},
+            "previous": {"start": "2026-02-03", "end": "2026-02-09"},
+            "timezone": "America/New_York",
+        },
+        "kpis": [
+            {
+                "metric_name": "DAU",
+                "current_value": 12450,
+                "previous_value": 11200,
+                "delta_absolute": 1250,
+                "delta_percent": 11.16,
+                "significance": "notable",
+                "query_hash": "q_dau",
+            },
+            {
+                "metric_name": "Revenue",
+                "current_value": 84320.50,
+                "previous_value": 78900.00,
+                "delta_absolute": 5420.50,
+                "delta_percent": 6.87,
+                "significance": "normal",
+                "query_hash": "q_revenue",
+            },
+            {
+                "metric_name": "Conversion Rate",
+                "current_value": 3.42,
+                "previous_value": 2.91,
+                "delta_absolute": 0.51,
+                "delta_percent": 17.53,
+                "significance": "notable",
+                "query_hash": "q_conversion",
+            },
+        ],
+        "top_segments": [
+            {"segment": "organic_search", "delta_contribution_pct": 42.3},
+            {"segment": "paid_social", "delta_contribution_pct": 28.1},
+        ],
+        "anomaly_notes": ["analytics.events table had 8-hour delay on 2026-02-14"],
+    }

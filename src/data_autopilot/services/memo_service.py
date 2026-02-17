@@ -21,6 +21,99 @@ class ValidationResult:
     errors: list[str]
 
 
+def _collect_packet_values(packet: dict) -> set:
+    """Extract every numeric value from the packet that a memo may legitimately cite."""
+    values: set = set()
+    for kpi in packet.get("kpis", []):
+        for key in ("current_value", "previous_value", "delta_absolute", "delta_percent"):
+            val = kpi.get(key)
+            if val is not None:
+                values.add(val)
+                if isinstance(val, float):
+                    values.add(round(val, 2))
+                if isinstance(val, (int, float)):
+                    values.add(int(round(val)))
+                    values.add(float(val))
+    for seg in packet.get("top_segments", []):
+        for key in ("delta_contribution_pct", "value", "count"):
+            val = seg.get(key)
+            if val is not None:
+                values.add(val)
+                if isinstance(val, float):
+                    values.add(round(val, 2))
+    return values
+
+
+def validate_numbers(memo: dict, packet: dict) -> list[str]:
+    """Check 1: Every numeric value cited in key_changes must exactly match the packet."""
+    kpi_map = {k["metric_name"]: k for k in packet.get("kpis", [])}
+    errors: list[str] = []
+    for change in memo.get("key_changes", []):
+        metric = change.get("metric_name", "")
+        kpi = kpi_map.get(metric)
+        if kpi is None:
+            continue  # handled by hallucination check
+        current = change.get("current")
+        if current is not None and current != kpi.get("current_value"):
+            errors.append(f"Current value mismatch for {metric}: got {current}, expected {kpi['current_value']}")
+        previous = change.get("previous")
+        if previous is not None and previous != kpi.get("previous_value"):
+            errors.append(f"Previous value mismatch for {metric}: got {previous}, expected {kpi['previous_value']}")
+        delta_pct = change.get("delta_pct")
+        if delta_pct is not None and delta_pct != kpi.get("delta_percent"):
+            errors.append(f"Delta percent mismatch for {metric}: got {delta_pct}, expected {kpi['delta_percent']}")
+        delta_abs = change.get("delta_absolute")
+        if delta_abs is not None and delta_abs != kpi.get("delta_absolute"):
+            errors.append(f"Delta absolute mismatch for {metric}: got {delta_abs}, expected {kpi['delta_absolute']}")
+    return errors
+
+
+def validate_metric_names(memo: dict, packet: dict) -> list[str]:
+    """Check 3: Every metric_name in memo must exist in the packet's KPI list."""
+    known_metrics = {kpi["metric_name"] for kpi in packet.get("kpis", [])}
+    errors: list[str] = []
+    for change in memo.get("key_changes", []):
+        name = change.get("metric_name")
+        if name and name not in known_metrics:
+            errors.append(f"Unknown metric '{name}' not in packet")
+    return errors
+
+
+def validate_coverage(memo: dict, packet: dict) -> list[str]:
+    """Check 2: Every KPI flagged as notable/major/critical must appear in the memo."""
+    notable = {
+        k["metric_name"]
+        for k in packet.get("kpis", [])
+        if k.get("significance") in {"notable", "major", "critical"}
+    }
+    covered = {c.get("metric_name") for c in memo.get("key_changes", [])}
+    missing = notable - covered
+    warnings: list[str] = []
+    if missing:
+        warnings.append(f"Missing notable metrics in memo: {sorted(missing)}")
+    return warnings
+
+
+def validate_causes(memo: dict, packet: dict) -> list[str]:
+    """Check 4: Cause evidence validation."""
+    kpi_map = {k["metric_name"]: k for k in packet.get("kpis", [])}
+    segment_names = {str(s.get("segment", "")).lower() for s in packet.get("top_segments", [])}
+    errors: list[str] = []
+    for cause in memo.get("likely_causes", []):
+        et = cause.get("evidence_type")
+        if et not in {"data_supported", "speculative"}:
+            errors.append(f"Invalid evidence_type: {et}")
+        if et == "data_supported":
+            text = str(cause.get("supporting_evidence", "")).lower()
+            has_metric_ref = any(name.lower() in text for name in kpi_map.keys())
+            has_segment_ref = any(seg and seg in text for seg in segment_names)
+            if not has_metric_ref and not has_segment_ref:
+                cause["evidence_type"] = "speculative"
+                cause["supporting_evidence"] = "no supporting data"
+                errors.append("Downgraded unsupported data_supported cause to speculative")
+    return errors
+
+
 class MemoService:
     def __init__(self) -> None:
         self.artifacts = ArtifactService()
@@ -151,6 +244,7 @@ class MemoService:
                     "current": k["current_value"],
                     "previous": k["previous_value"],
                     "delta_pct": k["delta_percent"],
+                    "delta_absolute": k["delta_absolute"],
                     "interpretation": f"{k['metric_name']} moved by {k['delta_percent']}% compared to the previous period.",
                     "confidence": "high" if k.get("significance") in {"major", "critical"} else "medium",
                     "supporting_query_hashes": [k["query_hash"]],
@@ -168,31 +262,44 @@ class MemoService:
             "data_quality_notes": packet["anomaly_notes"],
         }
 
-    def _generate_memo(self, packet: dict) -> dict:
+    def _build_system_prompt(self, correction_errors: list[str] | None = None) -> str:
+        base = (
+            "You are a data analyst writing a weekly executive memo. "
+            "Return only JSON with keys: headline_summary, key_changes, likely_causes, recommended_actions, data_quality_notes. "
+            "CRITICAL RULES:\n"
+            "- headline_summary: list of strings summarizing the week\n"
+            "- key_changes: list of objects with metric_name, current, previous, delta_pct, delta_absolute, interpretation, confidence\n"
+            "- metric_name values MUST exactly match the KPI metric_name values in the packet\n"
+            "- current/previous/delta_pct/delta_absolute values MUST exactly match the packet values — never round, estimate, or recalculate\n"
+            "- likely_causes: list of objects with hypothesis, supporting_evidence, evidence_type\n"
+            "- evidence_type MUST be 'data_supported' or 'speculative'\n"
+            "- data_supported causes MUST reference a metric_name or segment that exists in the packet\n"
+            "- recommended_actions: list of action strings\n"
+            "- data_quality_notes: copy anomaly_notes from the packet\n"
+            "- Every notable/major KPI must appear in key_changes\n"
+            "- NEVER invent metrics, values, or segment names not in the packet"
+        )
+        if correction_errors:
+            base += (
+                "\n\nPREVIOUS ATTEMPT FAILED VALIDATION. Fix these errors:\n"
+                + "\n".join(f"- {e}" for e in correction_errors)
+            )
+        return base
+
+    def _generate_memo(self, packet: dict, correction_errors: list[str] | None = None) -> dict:
         if not self.llm.is_configured():
             return self._generate_memo_fallback(packet)
 
-        system_prompt = (
-            "You are a data analyst writing a weekly executive memo. "
-            "Return only JSON with keys: headline_summary, key_changes, likely_causes, recommended_actions, data_quality_notes. "
-            "Use only values present in the packet. Never invent metrics."
-        )
+        system_prompt = self._build_system_prompt(correction_errors)
         user_prompt = (
             "Create weekly memo from this packet:\n"
             + json.dumps(packet, sort_keys=True)
         )
         try:
             memo = self.llm.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
-            if not isinstance(memo.get("headline_summary"), list):
-                return self._generate_memo_fallback(packet)
-            if not isinstance(memo.get("key_changes"), list):
-                return self._generate_memo_fallback(packet)
-            if not isinstance(memo.get("likely_causes"), list):
-                return self._generate_memo_fallback(packet)
-            if not isinstance(memo.get("recommended_actions"), list):
-                return self._generate_memo_fallback(packet)
-            if not isinstance(memo.get("data_quality_notes"), list):
-                return self._generate_memo_fallback(packet)
+            for key in ("headline_summary", "key_changes", "likely_causes", "recommended_actions", "data_quality_notes"):
+                if not isinstance(memo.get(key), list):
+                    return self._generate_memo_fallback(packet)
             return memo
         except Exception:
             return self._generate_memo_fallback(packet)
@@ -201,40 +308,26 @@ class MemoService:
         errors: list[str] = []
         warnings: list[str] = []
 
-        kpi_map = {k["metric_name"]: k for k in packet.get("kpis", [])}
-        segment_names = {str(s.get("segment", "")).lower() for s in packet.get("top_segments", [])}
+        # Check 3: Hallucination detection — unknown metrics
+        metric_errors = validate_metric_names(memo, packet)
+        errors.extend(metric_errors)
 
-        for change in memo.get("key_changes", []):
-            metric = change.get("metric_name")
-            kpi = kpi_map.get(metric)
-            if kpi is None:
-                errors.append(f"Unknown metric: {metric}")
-                continue
-            if change.get("current") != kpi.get("current_value"):
-                errors.append(f"Current value mismatch for {metric}")
-            if change.get("previous") != kpi.get("previous_value"):
-                errors.append(f"Previous value mismatch for {metric}")
-            if change.get("delta_pct") != kpi.get("delta_percent"):
-                errors.append(f"Delta percent mismatch for {metric}")
+        # Check 1: Number reconciliation — exact value match
+        number_errors = validate_numbers(memo, packet)
+        errors.extend(number_errors)
 
-        notable = {k["metric_name"] for k in packet.get("kpis", []) if k.get("significance") in {"notable", "major", "critical"}}
-        covered = {c.get("metric_name") for c in memo.get("key_changes", [])}
-        missing = notable - covered
-        if missing:
-            warnings.append(f"Missing notable metrics in memo: {sorted(missing)}")
+        # Check 2: Metric coverage — notable KPIs must be present
+        coverage_warnings = validate_coverage(memo, packet)
+        warnings.extend(coverage_warnings)
 
-        for cause in memo.get("likely_causes", []):
-            et = cause.get("evidence_type")
-            if et not in {"data_supported", "speculative"}:
-                errors.append("Invalid evidence_type")
-            if et == "data_supported":
-                text = str(cause.get("supporting_evidence", "")).lower()
-                has_metric_ref = any(name.lower() in text for name in kpi_map.keys())
-                has_segment_ref = any(seg and seg in text for seg in segment_names)
-                if not has_metric_ref and not has_segment_ref:
-                    warnings.append("Downgrading unsupported data_supported cause to speculative")
-                    cause["evidence_type"] = "speculative"
-                    cause["supporting_evidence"] = "no supporting data"
+        # Check 4: Cause evidence validation
+        cause_errors = validate_causes(memo, packet)
+        # Downgrades are warnings, invalid evidence_type is an error
+        for err in cause_errors:
+            if "Invalid evidence_type" in err:
+                errors.append(err)
+            else:
+                warnings.append(err)
 
         return ValidationResult(passed=len(errors) == 0, warnings=warnings, errors=errors)
 
@@ -242,14 +335,16 @@ class MemoService:
         packet = self._packet(db, tenant_id=tenant_id)
 
         attempts = 0
-        memo = {}
+        memo: dict = {}
         validation = ValidationResult(False, [], ["not started"])
+        prev_errors: list[str] = []
         while attempts < 3:
             attempts += 1
-            memo = self._generate_memo(packet)
+            memo = self._generate_memo(packet, correction_errors=prev_errors if prev_errors else None)
             validation = self.validate(packet, memo)
             if validation.passed:
                 break
+            prev_errors = validation.errors
 
         if not validation.passed:
             memo = {
