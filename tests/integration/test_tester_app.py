@@ -34,6 +34,16 @@ def test_tester_app_references_api_endpoints() -> None:
     assert "/api/v1/llm/usage" in body
     assert "/api/v1/llm/budget" in body
     assert "/ready" in body
+    assert "/api/v1/feedback/review" in body
+    assert "provider-summary" in body
+
+
+def test_tester_app_has_feedback_ui() -> None:
+    r = client.get("/tester-app")
+    body = r.text
+    assert "My Feedback" in body
+    assert "feedbackCount" in body
+    assert "showToast" in body
 
 
 def test_tester_app_has_dark_theme() -> None:

@@ -46,6 +46,23 @@ def _ensure_schema_compat() -> None:
             if "last_error" not in ntf_names:
                 conn.execute(text("ALTER TABLE alert_notifications ADD COLUMN last_error VARCHAR(255)"))
 
+        rows_fb = conn.execute(text("PRAGMA table_info('feedback')")).fetchall()
+        if rows_fb:
+            fb_names = {str(r[1]) for r in rows_fb}
+            for col, ddl in [
+                ("session_id", "VARCHAR(128)"),
+                ("provider", "VARCHAR(64)"),
+                ("model", "VARCHAR(128)"),
+                ("was_fallback", "BOOLEAN DEFAULT 0"),
+                ("conversation_context", "TEXT"),
+                ("channel", "VARCHAR(64)"),
+                ("resolved", "BOOLEAN DEFAULT 0"),
+                ("resolved_at", "DATETIME"),
+                ("resolved_by", "VARCHAR(64)"),
+            ]:
+                if col not in fb_names:
+                    conn.execute(text(f"ALTER TABLE feedback ADD COLUMN {col} {ddl}"))
+
 
 _ensure_schema_compat()
 

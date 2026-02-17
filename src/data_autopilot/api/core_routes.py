@@ -685,6 +685,60 @@ def feedback_summary(
     return summary
 
 
+@router.get('/api/v1/feedback/provider-summary')
+def feedback_provider_summary(
+    org_id: str,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(tenant_from_headers),
+    role: Role = Depends(role_from_headers),
+) -> dict:
+    ensure_tenant_scope(tenant_id, org_id)
+    require_member_or_admin(role)
+    return feedback_service.provider_summary(db, tenant_id=org_id)
+
+
+@router.get('/api/v1/feedback/review')
+def feedback_review(
+    org_id: str,
+    status: str | None = None,
+    provider: str | None = None,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(tenant_from_headers),
+    role: Role = Depends(role_from_headers),
+) -> dict:
+    from data_autopilot.security.rbac import require_admin
+
+    ensure_tenant_scope(tenant_id, org_id)
+    require_admin(role)
+    items = feedback_service.list_for_review(db, tenant_id=org_id, status=status, provider=provider)
+    return {"org_id": org_id, "count": len(items), "items": items}
+
+
+@router.post('/api/v1/feedback/{feedback_id}/resolve')
+def resolve_feedback(
+    feedback_id: str,
+    req: dict,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(tenant_from_headers),
+    role: Role = Depends(role_from_headers),
+) -> dict:
+    from fastapi import HTTPException
+    from data_autopilot.security.rbac import require_admin
+
+    require_admin(role)
+    resolved_by = req.get("resolved_by", "admin")
+    row = feedback_service.resolve(db, feedback_id=feedback_id, resolved_by=resolved_by)
+    if not row:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    audit_service.log(
+        db,
+        tenant_id=tenant_id,
+        event_type="feedback_resolved",
+        payload={"feedback_id": feedback_id, "resolved_by": resolved_by},
+    )
+    return {"id": row.id, "resolved": True, "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None}
+
+
 @router.get('/api/v1/llm/eval-runs')
 def list_eval_runs(
     org_id: str,
@@ -906,6 +960,7 @@ _TESTER_APP_HTML = """\
     <div class="flex items-center gap-3">
       <h1 class="text-base font-bold text-white tracking-tight">Data Team Autopilot</h1>
       <span class="text-xs bg-accent/20 text-accent px-2 py-0.5 rounded-full font-medium">Tester Preview</span>
+      <span x-show="feedbackCount > 0" class="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full" x-text="feedbackCount + ' feedback'"></span>
     </div>
     <div class="flex items-center gap-4 text-xs">
       <label class="flex items-center gap-1.5">
@@ -1136,6 +1191,28 @@ _TESTER_APP_HTML = """\
           </div>
         </div>
 
+        <!-- My Feedback -->
+        <div x-show="activeTab === 'my_feedback'">
+          <h3 class="text-sm font-semibold text-slate-300 mb-3">My Feedback</h3>
+          <button @click="loadMyFeedback()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-full transition mb-3">Refresh</button>
+          <div x-show="myFeedbackItems.length === 0" class="text-xs text-slate-500">No feedback submitted yet.</div>
+          <template x-for="(fb, fi) in myFeedbackItems" :key="fi">
+            <div class="bg-slate-800/60 border border-slate-700/40 rounded-lg p-3 mb-2 text-xs">
+              <div class="flex justify-between items-center">
+                <span class="font-medium" :class="fb.feedback_type === 'positive' ? 'text-accent' : 'text-red-400'" x-text="fb.feedback_type"></span>
+                <span class="text-slate-500" x-text="fb.created_at"></span>
+              </div>
+              <div class="text-slate-400 mt-1" x-text="fb.artifact_type + ' — ' + fb.artifact_id"></div>
+              <div x-show="fb.provider" class="text-slate-500 mt-0.5">Provider: <span class="text-slate-300" x-text="fb.provider"></span></div>
+              <div x-show="fb.comment" class="text-slate-400 mt-1 italic" x-text="fb.comment"></div>
+              <div class="mt-1">
+                <span x-show="fb.resolved" class="text-accent text-[11px]">Resolved</span>
+                <span x-show="!fb.resolved" class="text-slate-500 text-[11px]">Unresolved</span>
+              </div>
+            </div>
+          </template>
+        </div>
+
         <!-- Model Comparison -->
         <div x-show="activeTab === 'comparison'">
           <h3 class="text-sm font-semibold text-slate-300 mb-3">Model Comparison</h3>
@@ -1173,6 +1250,9 @@ _TESTER_APP_HTML = """\
       </div>
     </div>
   </div>
+
+  <!-- Toast -->
+  <div x-show="toastVisible" x-transition class="fixed bottom-6 right-6 bg-accent text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50" x-text="toastMsg"></div>
 </div>
 
 <script>
@@ -1195,6 +1275,7 @@ function testerApp() {
       { id: 'audit', label: 'Audit' },
       { id: 'llm_usage', label: 'LLM Usage' },
       { id: 'comparison', label: 'Model Comparison' },
+      { id: 'my_feedback', label: 'My Feedback' },
     ],
     status: { llm_ok: false, llm_model: '', bq_ok: false, bq_mode: '...', mb_ok: false, mb_mode: '...' },
     artifacts: { dashboards: [], memos: [], profiles: [] },
@@ -1204,6 +1285,10 @@ function testerApp() {
     llmBudget: null,
     evalResults: null,
     evalRunning: false,
+    feedbackCount: 0,
+    myFeedbackItems: [],
+    toastMsg: '',
+    toastVisible: false,
 
     hdrs() {
       return { 'Content-Type': 'application/json', 'X-Tenant-Id': this.orgId, 'X-User-Role': 'admin' };
@@ -1353,9 +1438,29 @@ function testerApp() {
       if (msg.originalText) { this.input = msg.originalText; this.sendMessage(); }
     },
 
+    showToast(text) {
+      this.toastMsg = text;
+      this.toastVisible = true;
+      setTimeout(() => { this.toastVisible = false; }, 3000);
+    },
+
+    async loadMyFeedback() {
+      try {
+        const [revRes, sumRes] = await Promise.all([
+          fetch('/api/v1/feedback/review?org_id=' + encodeURIComponent(this.orgId), { headers: this.hdrs() }),
+          fetch('/api/v1/feedback/provider-summary?org_id=' + encodeURIComponent(this.orgId), { headers: this.hdrs() }),
+        ]);
+        const data = await revRes.json();
+        this.myFeedbackItems = data.items || [];
+        this.feedbackCount = this.myFeedbackItems.length;
+        this.providerSummary = await sumRes.json();
+      } catch (e) { console.error('Load feedback failed', e); }
+    },
+
     async submitFeedback(msg, type) {
       msg.feedbackType = type;
       if (type === 'positive') msg.showFeedbackForm = false;
+      const recentMsgs = this.messages.filter(m => m.role === 'user' || m.role === 'assistant').slice(-6).map(m => ({ role: m.role, text: (m.text || '').slice(0, 200) }));
       try {
         await fetch('/api/v1/feedback', {
           method: 'POST',
@@ -1369,8 +1474,16 @@ function testerApp() {
             feedback_type: type,
             comment: msg.feedbackComment || null,
             prompt_hash: msg.meta?.prompt_hash || null,
+            provider: msg.provider || null,
+            model: msg.meta?.model || null,
+            session_id: this.sessionId,
+            was_fallback: msg.meta?.was_fallback || false,
+            conversation_context: recentMsgs,
+            channel: 'tester_app',
           }),
         });
+        this.feedbackCount++;
+        this.showToast('Feedback submitted');
       } catch (e) { console.error('Feedback failed', e); }
     },
 

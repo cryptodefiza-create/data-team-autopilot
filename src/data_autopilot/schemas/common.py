@@ -50,6 +50,12 @@ class FeedbackRequest(BaseModel):
     comment: str | None = None
     prompt_hash: str | None = None
     tool_inputs_hash: str | None = None
+    session_id: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    was_fallback: bool = False
+    conversation_context: list[dict] | None = None
+    channel: str | None = None
 
 
 class FeedbackResponse(BaseModel):
