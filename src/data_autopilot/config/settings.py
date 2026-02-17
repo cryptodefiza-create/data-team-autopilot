@@ -38,12 +38,22 @@ class Settings(BaseSettings):
     simulate_llm_unavailable: bool = Field(default=False)
     simulate_warehouse_unavailable: bool = Field(default=False)
 
-    # LLM
+    # LLM — primary provider (used for all production requests)
     llm_api_base_url: str = Field(default="https://api.openai.com/v1")
     llm_api_key: str = Field(default="")
     llm_model: str = Field(default="")
     llm_timeout_seconds: int = Field(default=30)
     llm_temperature: float = Field(default=0.0)
+
+    # LLM — evaluation providers (run in parallel for A/B comparison)
+    llm_eval_providers_json: str = Field(
+        default="[]",
+        description=(
+            'JSON array of evaluation providers. Each entry: '
+            '{"name": "...", "base_url": "...", "api_key": "...", "model": "...", "enabled": true}'
+        ),
+    )
+    llm_eval_enabled: bool = Field(default=False, description="Enable parallel evaluation runs")
 
     # Slack integration
     slack_signing_secret: str = Field(default="")
@@ -80,6 +90,20 @@ class Settings(BaseSettings):
 
         if self.llm_temperature < 0 or self.llm_temperature > 2:
             raise ValueError("LLM_TEMPERATURE must be between 0 and 2")
+
+        if self.llm_eval_providers_json:
+            try:
+                providers = json.loads(self.llm_eval_providers_json)
+            except Exception as exc:
+                raise ValueError("LLM_EVAL_PROVIDERS_JSON must be valid JSON") from exc
+            if not isinstance(providers, list):
+                raise ValueError("LLM_EVAL_PROVIDERS_JSON must be a JSON array")
+            for p in providers:
+                if not isinstance(p, dict):
+                    raise ValueError("Each eval provider must be a JSON object")
+                for key in ("name", "base_url", "api_key", "model"):
+                    if not p.get(key):
+                        raise ValueError(f"Eval provider missing required key: {key}")
 
         return self
 

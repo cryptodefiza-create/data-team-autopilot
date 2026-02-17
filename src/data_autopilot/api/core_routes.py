@@ -545,11 +545,18 @@ def ready() -> dict:
 def llm_status() -> dict:
     settings = get_settings()
     configured = bool(settings.llm_api_key and settings.llm_model)
+    from data_autopilot.services.llm_client import get_eval_providers
+
+    eval_providers = get_eval_providers()
     return {
         "mode": "llm" if configured else "fallback",
         "configured": configured,
         "model": settings.llm_model or None,
         "base_url": settings.llm_api_base_url,
+        "eval_enabled": settings.llm_eval_enabled,
+        "eval_providers": [
+            {"name": p.name, "model": p.model} for p in eval_providers
+        ],
     }
 
 
@@ -637,3 +644,43 @@ def feedback_summary(
     summary = feedback_service.summary(db, tenant_id=org_id)
     audit_service.log(db, tenant_id=org_id, event_type="feedback_summary_viewed", payload={"org_id": org_id})
     return summary
+
+
+@router.get('/api/v1/llm/eval-runs')
+def list_eval_runs(
+    org_id: str,
+    task_type: str | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(tenant_from_headers),
+    role: Role = Depends(role_from_headers),
+) -> dict:
+    """List recent LLM evaluation runs for analysis and comparison."""
+    from data_autopilot.models.entities import AuditLog
+    from sqlalchemy import select
+
+    ensure_tenant_scope(tenant_id, org_id)
+    require_member_or_admin(role)
+
+    stmt = (
+        select(AuditLog)
+        .where(AuditLog.tenant_id == org_id, AuditLog.event_type == "llm_eval_run")
+        .order_by(AuditLog.created_at.desc())
+        .limit(min(limit, 200))
+    )
+    rows = db.execute(stmt).scalars().all()
+
+    items = []
+    for row in rows:
+        payload = row.payload or {}
+        if task_type and payload.get("task_type") != task_type:
+            continue
+        items.append({
+            "run_id": payload.get("run_id"),
+            "task_type": payload.get("task_type"),
+            "started_at": payload.get("started_at"),
+            "primary": payload.get("primary"),
+            "evaluations": payload.get("evaluations", []),
+        })
+
+    return {"org_id": org_id, "count": len(items), "items": items}
