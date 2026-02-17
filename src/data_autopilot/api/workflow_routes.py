@@ -4,10 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datetime import datetime
+
 from data_autopilot.config.settings import get_settings
 from data_autopilot.db.session import get_db
-from data_autopilot.models.entities import Role, WorkflowQueue
-from data_autopilot.security.rbac import require_member_or_admin, role_from_headers
+from data_autopilot.models.entities import Role, WorkflowQueue, WorkflowRun
+from data_autopilot.security.rbac import require_admin, require_member_or_admin, role_from_headers
 from data_autopilot.security.tenancy import ensure_tenant_scope, tenant_from_headers
 from data_autopilot.api.state import (
     alert_service,
@@ -355,3 +357,35 @@ def cancel_workflow_run(
         "status": row.status,
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
     }
+
+
+@router.post('/api/v1/workflows/cancel-all')
+def cancel_all_running(
+    org_id: str,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(tenant_from_headers),
+    role: Role = Depends(role_from_headers),
+) -> dict:
+    """Cancel all running workflows and clear queued items for a tenant."""
+    ensure_tenant_scope(tenant_id, org_id)
+    require_admin(role)
+    runs = db.execute(
+        select(WorkflowRun).where(WorkflowRun.tenant_id == org_id, WorkflowRun.status == "running")
+    ).scalars().all()
+    for run in runs:
+        run.status = "cancelled"
+        run.finished_at = datetime.utcnow()
+        db.add(run)
+
+    queued = db.execute(
+        select(WorkflowQueue).where(WorkflowQueue.tenant_id == org_id, WorkflowQueue.status == "queued")
+    ).scalars().all()
+    for q in queued:
+        q.status = "cancelled"
+        q.processed_at = datetime.utcnow()
+        db.add(q)
+
+    db.commit()
+    result = {"cancelled_runs": len(runs), "cancelled_queued": len(queued)}
+    audit_service.log(db, tenant_id=org_id, event_type="workflows_cancel_all", payload=result)
+    return result

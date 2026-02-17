@@ -65,7 +65,11 @@ def _call_provider(provider: LLMProvider, system_prompt: str, user_prompt: str) 
 
         with httpx.Client(timeout=provider.timeout_seconds, follow_redirects=True) as client:
             response = client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
+            if response.status_code >= 400:
+                error_body = response.text[:500]
+                raise RuntimeError(
+                    f"{response.status_code} from {url}: {error_body}"
+                )
             body = response.json()
 
         choices = body.get("choices")
