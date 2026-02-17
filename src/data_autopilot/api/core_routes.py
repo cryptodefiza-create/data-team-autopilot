@@ -907,15 +907,36 @@ def evaluate_memo_providers(
         stats["avg_latency_ms"] = round(stats["total_latency_ms"] / runs_per_provider, 2)
         results[provider_name] = stats
 
-    # Store results in audit log
+    # Blind labeling: deterministic per-org shuffle
+    import random as _random
+
+    provider_names = sorted(results.keys())
+    rng = _random.Random(org_id)
+    rng.shuffle(provider_names)
+    blind_mapping: dict[str, str] = {}
+    blind_results: dict[str, dict] = {}
+    for idx, real_name in enumerate(provider_names):
+        label = f"Model {chr(65 + idx)}"
+        blind_mapping[label] = real_name
+        blind_results[label] = results[real_name]
+
     audit_service.log(
         db,
         tenant_id=org_id,
         event_type="memo_provider_evaluation",
-        payload={"runs_per_provider": runs_per_provider, "results": results},
+        payload={
+            "runs_per_provider": runs_per_provider,
+            "results": results,
+            "blind_mapping": blind_mapping,
+        },
     )
 
-    return {"org_id": org_id, "runs_per_provider": runs_per_provider, "results": results}
+    return {
+        "org_id": org_id,
+        "runs_per_provider": runs_per_provider,
+        "blind_mode": True,
+        "results": blind_results,
+    }
 
 
 _TESTER_APP_HTML = """\

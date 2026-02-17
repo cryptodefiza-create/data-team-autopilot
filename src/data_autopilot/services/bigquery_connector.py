@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import math
 import re
 from typing import Any
 
@@ -81,35 +82,51 @@ class BigQueryConnector:
                             "users": {
                                 "columns": [
                                     {"name": "user_id", "type": "STRING"},
-                                    {"name": "created_at", "type": "TIMESTAMP"},
                                     {"name": "email", "type": "STRING"},
+                                    {"name": "created_at", "type": "TIMESTAMP"},
+                                    {"name": "channel", "type": "STRING"},
+                                    {"name": "country", "type": "STRING"},
                                 ],
                                 "partition_key": "created_at",
-                                "row_count_est": 50_000,
+                                "row_count_est": 1_200,
                                 "bytes_est": 5_000_000,
                                 "freshness_hours": 2,
                             },
                             "events": {
                                 "columns": [
+                                    {"name": "event_id", "type": "STRING"},
                                     {"name": "user_id", "type": "STRING"},
-                                    {"name": "created_at", "type": "TIMESTAMP"},
                                     {"name": "event_name", "type": "STRING"},
+                                    {"name": "timestamp", "type": "TIMESTAMP"},
+                                    {"name": "properties", "type": "JSON"},
                                 ],
-                                "partition_key": "created_at",
-                                "row_count_est": 5_000_000,
+                                "partition_key": "timestamp",
+                                "row_count_est": 12_000,
                                 "bytes_est": 900_000_000,
                                 "freshness_hours": 2,
                             },
                             "orders": {
                                 "columns": [
                                     {"name": "order_id", "type": "STRING"},
-                                    {"name": "created_at", "type": "TIMESTAMP"},
+                                    {"name": "user_id", "type": "STRING"},
                                     {"name": "amount", "type": "FLOAT"},
+                                    {"name": "status", "type": "STRING"},
+                                    {"name": "created_at", "type": "TIMESTAMP"},
                                 ],
                                 "partition_key": "created_at",
-                                "row_count_est": 220_000,
+                                "row_count_est": 5_500,
                                 "bytes_est": 120_000_000,
                                 "freshness_hours": 3,
+                            },
+                            "config": {
+                                "columns": [
+                                    {"name": "key", "type": "STRING"},
+                                    {"name": "value", "type": "STRING"},
+                                ],
+                                "partition_key": None,
+                                "row_count_est": 25,
+                                "bytes_est": 4_000,
+                                "freshness_hours": 720,
                             },
                         }
                     }
@@ -161,20 +178,47 @@ class BigQueryConnector:
     def execute_query(self, sql: str, timeout_seconds: int = 120, service_account_json: dict | None = None) -> dict[str, Any]:
         if self.settings.bigquery_mock_mode:
             sql_upper = sql.upper()
+            actual_bytes = len(sql) * 2048
+
             if "COUNT(DISTINCT USER_ID) AS DAU" in sql_upper and "GROUP BY" in sql_upper:
-                return {"rows": [{"day": "2026-02-14", "dau": 12450}], "actual_bytes": len(sql) * 2048}
+                rows = []
+                for i in range(14):
+                    if i == 9:
+                        continue  # missing data day
+                    day = f"2026-02-{3 + i:02d}"
+                    noise = ((i * 7 + 13) % 41) - 20  # deterministic ±20
+                    weekday_offset = (3 + i) % 7  # 0=Mon for Feb 3 2026 (Tuesday)
+                    wave = math.sin(weekday_offset * math.pi / 3.5) * 50
+                    dau = int(300 + wave + noise)
+                    dau = max(200, min(400, dau))
+                    rows.append({"day": day, "dau": dau})
+                return {"rows": rows, "actual_bytes": actual_bytes}
+
             if "SUM(AMOUNT)" in sql_upper and "GROUP BY" in sql_upper:
-                return {"rows": [{"day": "2026-02-14", "revenue": 91234.11}], "actual_bytes": len(sql) * 2048}
+                rows = []
+                for i in range(14):
+                    if i == 9:
+                        continue  # missing data day
+                    day = f"2026-02-{3 + i:02d}"
+                    weekday_idx = (1 + i) % 7  # Feb 3 2026 is Tuesday (idx 1)
+                    is_weekend = weekday_idx >= 5
+                    base = 3200.0 if is_weekend else 6500.0
+                    noise = ((i * 11 + 7) % 81) * 10 - 400  # deterministic ±400
+                    revenue = round(base + noise, 2)
+                    rows.append({"day": day, "revenue": revenue})
+                return {"rows": rows, "actual_bytes": actual_bytes}
+
             scalar_alias = re.search(r"\bAS\s+([a-zA-Z_][a-zA-Z0-9_]*)", sql, flags=re.IGNORECASE)
             alias = scalar_alias.group(1) if scalar_alias else "value"
             seed = int(hashlib.sha256(sql.encode("utf-8")).hexdigest()[:8], 16)
+
             if "COUNT(DISTINCT USER_ID)" in sql_upper:
-                value = 10_000 + (seed % 4_000)
-                return {"rows": [{alias: value}], "actual_bytes": len(sql) * 2048}
+                value = 200 + (seed % 201)  # 200-400
+                return {"rows": [{alias: value}], "actual_bytes": actual_bytes}
             if "SUM(AMOUNT)" in sql_upper:
                 value = float(50_000 + (seed % 50_000))
-                return {"rows": [{alias: value}], "actual_bytes": len(sql) * 2048}
-            return {"rows": [{"value": 1}], "actual_bytes": len(sql) * 2048}
+                return {"rows": [{alias: value}], "actual_bytes": actual_bytes}
+            return {"rows": [{"value": 1}], "actual_bytes": actual_bytes}
 
         try:
             from google.cloud import bigquery  # type: ignore

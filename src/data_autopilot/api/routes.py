@@ -752,3 +752,60 @@ def tenant_purge_execute(
     if response.get("status") == "not_found":
         raise HTTPException(status_code=404, detail="tenant not found")
     return response
+
+
+@router.post('/api/v1/admin/setup-tester-org')
+def setup_tester_org(
+    req: dict,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(tenant_from_headers),
+    role: Role = Depends(role_from_headers),
+) -> dict:
+    """One-shot idempotent setup: create tenant, connect mock BQ, run profiler."""
+    from data_autopilot.models.entities import Tenant, Connection, CatalogTable, CatalogColumn
+    from data_autopilot.api.state import workflow_service
+
+    org_id = str(req.get("org_id", tenant_id))
+    ensure_tenant_scope(tenant_id, org_id)
+    require_admin(role)
+
+    tenant_exists = db.query(Tenant).filter(Tenant.id == org_id).first() is not None
+    if not tenant_exists:
+        db.add(Tenant(id=org_id, name=org_id, settings={}))
+        db.commit()
+
+    conn = db.query(Connection).filter(Connection.tenant_id == org_id, Connection.status == "active").first()
+    if conn is None:
+        conn = Connection(id=f"conn_{org_id}", tenant_id=org_id, status="active", config_encrypted={})
+        db.add(conn)
+        db.commit()
+
+    workflow_service.run_profile_flow(db, tenant_id=org_id)
+
+    tables = db.query(CatalogTable).filter(CatalogTable.tenant_id == org_id).all()
+    pii_cols = (
+        db.query(CatalogColumn)
+        .filter(CatalogColumn.tenant_id == org_id, CatalogColumn.pii_confidence >= 80)
+        .all()
+    )
+
+    summary = {
+        "org_id": org_id,
+        "tenant_exists": tenant_exists,
+        "tables_discovered": len(tables),
+        "table_names": [t.table_name for t in tables],
+        "pii_columns_flagged": len(pii_cols),
+        "pii_details": [
+            {"table": c.table_name, "column": c.column_name, "confidence": c.pii_confidence}
+            for c in pii_cols
+        ],
+    }
+
+    audit_service.log(
+        db,
+        tenant_id=org_id,
+        event_type="tester_org_setup",
+        payload=summary,
+    )
+
+    return summary
