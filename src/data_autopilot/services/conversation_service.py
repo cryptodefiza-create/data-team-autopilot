@@ -5,13 +5,13 @@ import logging
 from sqlalchemy.orm import Session
 
 from data_autopilot.agents.planner import Planner
-
-logger = logging.getLogger(__name__)
 from data_autopilot.services.degradation_service import DegradationService
 from data_autopilot.services.llm_client import LLMClient
 from data_autopilot.services.llm_cost_service import LLMCostService
 from data_autopilot.services.query_service import QueryService
 from data_autopilot.services.workflow_service import WorkflowService
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationService:

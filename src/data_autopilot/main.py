@@ -1,10 +1,9 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-
-import logging
 
 from data_autopilot.config.settings import get_settings
 from data_autopilot.api.routes import router
