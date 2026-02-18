@@ -6,7 +6,11 @@ from uuid import uuid4
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
+import logging
+
 from data_autopilot.models.entities import AlertEvent, AlertSeverity, AlertStatus, Tenant
+
+logger = logging.getLogger(__name__)
 
 
 class AlertService:
@@ -35,6 +39,7 @@ class AlertService:
                     if minutes > 0:
                         policy[sev] = minutes
                 except Exception:
+                    logger.debug("Invalid alert policy value for %s: %r", key, configured[key])
                     continue
         return policy
 
@@ -198,6 +203,7 @@ class AlertService:
             try:
                 val = int(policy[sev])
             except Exception:
+                logger.debug("Invalid policy value for %s: %r", sev, policy[sev])
                 continue
             if val > 0:
                 sanitized[sev] = val

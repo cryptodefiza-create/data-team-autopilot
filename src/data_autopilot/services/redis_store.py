@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
+logger = logging.getLogger(__name__)
+
 try:
     import redis as redis_lib
 except Exception:  # pragma: no cover
+    logger.debug("redis package not available, using in-memory fallback")
     redis_lib = None
 
 
@@ -31,6 +35,7 @@ class RedisStore:
                 self._client = redis_lib.Redis.from_url(redis_url, decode_responses=True)
                 self._client.ping()
             except Exception:
+                logger.warning("Redis connection failed, falling back to in-memory store")
                 self._client = None
 
     def _cleanup(self) -> None:

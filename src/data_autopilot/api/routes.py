@@ -35,6 +35,13 @@ router.include_router(workflow_router)
 router.include_router(integration_router)
 
 
+def _parse_severity(value: str) -> AlertSeverity:
+    try:
+        return AlertSeverity(value)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid severity: {value}")
+
+
 @router.get('/api/v1/artifacts')
 def list_artifacts(
     org_id: str,
@@ -46,7 +53,10 @@ def list_artifacts(
     ensure_tenant_scope(tenant_id, org_id)
     from data_autopilot.models.entities import ArtifactType
 
-    parsed_type = ArtifactType(artifact_type) if artifact_type else None
+    try:
+        parsed_type = ArtifactType(artifact_type) if artifact_type else None
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid artifact_type: {artifact_type}")
     rows = artifact_service.list_for_tenant(db, tenant_id=org_id, artifact_type=parsed_type)
     response = {
         "items": [
@@ -422,7 +432,7 @@ def create_alert(
         dedupe_key=dedupe_key,
         title=title,
         message=message,
-        severity=AlertSeverity(severity),
+        severity=_parse_severity(severity),
         source_type=source_type,
         source_id=source_id,
     )
@@ -453,7 +463,10 @@ def list_alerts(
 ) -> dict:
     ensure_tenant_scope(tenant_id, org_id)
     require_member_or_admin(role)
-    parsed = AlertStatus(status) if status else None
+    try:
+        parsed = AlertStatus(status) if status else None
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
     rows = alert_service.list_for_tenant(db, tenant_id=org_id, status=parsed)
     items = [
         {
@@ -508,7 +521,10 @@ def snooze_alert(
     ensure_tenant_scope(tenant_id, org_id)
     require_member_or_admin(role)
     user_id = str(req.get("user_id", ""))
-    duration_minutes = int(req.get("duration_minutes", 60))
+    try:
+        duration_minutes = int(req.get("duration_minutes", 60))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="duration_minutes must be an integer")
     reason = req.get("reason")
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")

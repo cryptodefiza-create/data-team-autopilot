@@ -10,6 +10,8 @@ venv/
 # Local env/files
 .env
 .env.*.local
+deploy/.env.staging
+deploy/.env.live
 
 # Local runtime data
 *.db

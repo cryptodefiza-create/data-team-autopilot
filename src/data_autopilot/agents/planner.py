@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from data_autopilot.agents.contracts import AgentPlan, PlanStep
 from data_autopilot.services.llm_client import LLMClient
+
+logger = logging.getLogger(__name__)
 
 
 class Planner:
@@ -42,4 +46,5 @@ class Planner:
                 steps=[PlanStep(step_id=1, tool="execute_query", inputs={"sql": sql})],
             )
         except Exception:
+            logger.warning("LLM planning failed, using fallback", exc_info=True)
             return self._fallback_plan(message)

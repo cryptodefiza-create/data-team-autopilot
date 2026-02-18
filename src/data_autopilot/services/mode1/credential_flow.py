@@ -131,4 +131,5 @@ class CredentialFlow:
             customers = sum(1 for _ in connector.extract("customers"))
             return {"orders": orders, "products": products, "customers": customers}
         except Exception:
+            logger.warning("Failed to count Shopify data", exc_info=True)
             return {"orders": 0, "products": 0, "customers": 0}

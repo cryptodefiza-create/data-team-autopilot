@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta
 import hashlib
 import json
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,6 +14,8 @@ from data_autopilot.services.artifact_service import ArtifactService
 from data_autopilot.services.bigquery_connector import BigQueryConnector
 from data_autopilot.services.connection_context import load_active_connection_credentials
 from data_autopilot.services.llm_client import LLMClient
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -302,6 +306,7 @@ class MemoService:
                     return self._generate_memo_fallback(packet)
             return memo
         except Exception:
+            logger.warning("LLM memo generation failed, using fallback", exc_info=True)
             return self._generate_memo_fallback(packet)
 
     def validate(self, packet: dict, memo: dict) -> ValidationResult:

@@ -42,6 +42,7 @@ class ShopifyConnector(BaseProvider):
             data = self._get_shopify("shop.json")
             return data.get("shop", {})
         except Exception:
+            logger.warning("Failed to fetch Shopify shop info", exc_info=True)
             return {}
 
     def fetch(self, method: str, params: dict[str, Any]) -> ProviderResult:
@@ -91,7 +92,7 @@ class ShopifyConnector(BaseProvider):
                 url = self._get_next_page(resp.headers.get("Link", ""))
                 params = {}  # Only on first request
             except Exception as exc:
-                logger.error("Shopify extract %s failed: %s", entity, exc)
+                logger.error("Shopify extract %s failed: %s", entity, exc, exc_info=True)
                 break
 
     def _get_orders(self, params: dict[str, Any]) -> Iterator[dict[str, Any]]:

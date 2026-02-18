@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
@@ -841,7 +841,10 @@ def evaluate_memo_providers(
     ensure_tenant_scope(tenant_id, org_id)
     require_admin(role)
 
-    runs_per_provider = min(int(req.get("runs_per_provider", 1)), 50)
+    try:
+        runs_per_provider = min(int(req.get("runs_per_provider", 1)), 50)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="runs_per_provider must be an integer")
 
     packet = req.get("packet")
     if not packet:

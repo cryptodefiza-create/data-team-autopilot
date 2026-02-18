@@ -66,7 +66,7 @@ class TelegramHandler:
                     message=event.text,
                 )
             except Exception as exc:
-                logger.error("Telegram handler error: %s", exc)
+                logger.error("Telegram handler error: %s", exc, exc_info=True)
                 result = {
                     "response_type": "error",
                     "summary": f"Error: {exc}",

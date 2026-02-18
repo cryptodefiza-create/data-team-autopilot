@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 try:
     import sqlglot
@@ -42,6 +45,7 @@ class SqlSafetyEngine:
         try:
             parsed = sqlglot.parse(sql)
         except Exception:
+            logger.warning("SQL parse failed: %s", sql[:200])
             return SqlSafetyDecision(allowed=False, reasons=["Invalid SQL"])
 
         if len(parsed) != 1:
@@ -80,6 +84,7 @@ class SqlSafetyEngine:
                 try:
                     filter_expr = sqlglot.parse_one(f"{partition_col} >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)")
                 except Exception:
+                    logger.warning("Failed to parse partition filter expression for %s", partition_col)
                     filter_expr = None
                 if filter_expr is None:
                     return SqlSafetyDecision(allowed=False, reasons=[f"Missing required partition filter on {partition_col}"])

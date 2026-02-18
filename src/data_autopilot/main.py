@@ -1,4 +1,5 @@
 import logging
+import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -13,6 +14,10 @@ from data_autopilot.services.audit import AuditService
 from data_autopilot.services.connector_service import ConnectorService
 from data_autopilot.services.runtime_checks import run_startup_checks
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
@@ -118,3 +123,30 @@ async def audited_http_exception_handler(request: Request, exc: HTTPException):
         db.close()
 
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    tenant_id = request.headers.get("X-Tenant-Id", "unknown")
+    logger.error(
+        "Unhandled exception on %s %s (tenant=%s): %s",
+        request.method, request.url.path, tenant_id, exc,
+        exc_info=True,
+    )
+    audit = AuditService()
+    db = SessionLocal()
+    try:
+        audit.log(
+            db,
+            tenant_id=tenant_id,
+            event_type="unhandled_exception",
+            payload={
+                "method": request.method,
+                "path": request.url.path,
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
+            },
+        )
+    finally:
+        db.close()
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})

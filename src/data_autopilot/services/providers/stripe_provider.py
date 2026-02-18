@@ -42,6 +42,7 @@ class StripeConnector(BaseProvider):
             resp.raise_for_status()
             return resp.json()
         except Exception:
+            logger.warning("Failed to fetch Stripe account info", exc_info=True)
             return {}
 
     def fetch(self, method: str, params: dict[str, Any]) -> ProviderResult:
@@ -96,7 +97,7 @@ class StripeConnector(BaseProvider):
                 if has_more and records:
                     params["starting_after"] = records[-1]["id"]
             except Exception as exc:
-                logger.error("Stripe extract %s failed: %s", entity, exc)
+                logger.error("Stripe extract %s failed: %s", entity, exc, exc_info=True)
                 break
 
     def _get_charges(self, params: dict[str, Any]) -> Iterator[dict[str, Any]]:

@@ -93,7 +93,7 @@ class TransformDAG:
                 node.status = "failed"
                 node.error = str(exc)
                 results[name] = {"status": "failed", "error": str(exc)}
-                logger.error("Node %s failed: %s", name, exc)
+                logger.error("Node %s failed: %s", name, exc, exc_info=True)
 
         return results
 

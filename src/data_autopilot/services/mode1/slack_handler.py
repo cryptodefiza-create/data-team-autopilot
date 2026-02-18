@@ -73,7 +73,7 @@ class SlackHandler:
                     message=event.text,
                 )
             except Exception as exc:
-                logger.error("Slack handler error: %s", exc)
+                logger.error("Slack handler error: %s", exc, exc_info=True)
                 result = {
                     "response_type": "error",
                     "summary": f"Error processing your request: {exc}",
