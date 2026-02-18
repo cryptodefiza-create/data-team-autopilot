@@ -421,3 +421,134 @@ class CrossSourceResult(BaseModel):
     joined_records: int = 0
     join_key: str = ""
     records: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# ---------- Phase 4R: Web3 Connected Sources ----------
+
+
+class ActivityClassification(str, Enum):
+    ACCUMULATING = "accumulating"
+    DISTRIBUTING = "distributing"
+    HOLDING = "holding"
+
+
+class DailySnapshot(BaseModel):
+    date: str = ""
+    holder_count: int = 0
+    total_supply: float = 0.0
+    top10_pct: float = 0.0
+    gini_coefficient: float = 0.0
+
+
+class WhaleMovement(BaseModel):
+    address: str = ""
+    balance: float = 0.0
+    pct_supply: float = 0.0
+    recent_activity: str = "holding"  # accumulating | distributing | holding
+    recent_txns: int = 0
+    label: str = ""
+
+
+class ExchangeFlowReport(BaseModel):
+    mint: str = ""
+    period_days: int = 7
+    inflow_volume: float = 0.0
+    outflow_volume: float = 0.0
+    net_flow: float = 0.0
+    interpretation: str = ""  # "net_inflow" | "net_outflow"
+    inflow_count: int = 0
+    outflow_count: int = 0
+
+
+class OverlapReport(BaseModel):
+    token_a: str = ""
+    token_b: str = ""
+    token_a_holders: int = 0
+    token_b_holders: int = 0
+    overlap_count: int = 0
+    overlap_pct_a: float = 0.0
+    overlap_pct_b: float = 0.0
+    overlap_wallets: list[str] = Field(default_factory=list)
+
+
+class PoolReport(BaseModel):
+    pool_address: str = ""
+    protocol: str = ""
+    tvl: float = 0.0
+    volume_24h: float = 0.0
+    fees_24h: float = 0.0
+    fee_apr: float = 0.0
+    token_0: str = ""
+    token_1: str = ""
+    price_range: dict[str, float] | None = None
+
+
+class RevenueReport(BaseModel):
+    protocol_name: str = ""
+    total_fees: float = 0.0
+    protocol_revenue: float = 0.0
+    daily_breakdown: list[dict[str, Any]] = Field(default_factory=list)
+    trend: str = ""  # "increasing" | "decreasing" | "stable"
+    period_days: int = 30
+
+
+class VolumeReport(BaseModel):
+    exchange: str = ""
+    symbol: str = ""
+    volume_24h: float = 0.0
+    quote_volume_24h: float = 0.0
+    price_change_pct: float = 0.0
+    high_24h: float = 0.0
+    low_24h: float = 0.0
+
+
+class DepthReport(BaseModel):
+    exchange: str = ""
+    symbol: str = ""
+    bid_ask_spread: float = 0.0
+    bid_depth_1pct: float = 0.0
+    ask_depth_1pct: float = 0.0
+    best_bid: float = 0.0
+    best_ask: float = 0.0
+
+
+class FundingReport(BaseModel):
+    symbol: str = ""
+    current_rate: float = 0.0
+    next_funding_time: str = ""
+    interpretation: str = ""  # "longs paying shorts" | "shorts paying longs"
+
+
+class PortfolioAsset(BaseModel):
+    asset: str = ""
+    balance: float = 0.0
+    price_usd: float = 0.0
+    value_usd: float = 0.0
+
+
+class PortfolioReport(BaseModel):
+    exchange: str = ""
+    total_value_usd: float = 0.0
+    assets: list[PortfolioAsset] = Field(default_factory=list)
+
+
+class WalletLabel(BaseModel):
+    address: str = ""
+    label: str = "Unknown"
+    type: str = ""  # "exchange" | "protocol" | "market_maker" | "custom" | ""
+    source: str = "built_in"  # "built_in" | "custom"
+
+
+class AssessmentPanel(BaseModel):
+    title: str = ""
+    panel_type: str = ""  # "table" | "chart" | "metric" | "narrative"
+    data: dict[str, Any] = Field(default_factory=dict)
+    source: str = ""
+
+
+class AssessmentReport(BaseModel):
+    org_id: str = ""
+    assessment_type: str = ""  # "dao" | "defi"
+    panels: list[AssessmentPanel] = Field(default_factory=list)
+    memo: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
