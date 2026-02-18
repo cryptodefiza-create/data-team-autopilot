@@ -152,8 +152,12 @@ class ConversationService:
                     "warnings": [],
                 }
             else:
-                flow = self.workflow_service.run_profile_flow(db, tenant_id=tenant_id)
-                result = {"response_type": "workflow_result", "summary": "Profile workflow completed.", "data": flow, "warnings": []}
+                try:
+                    flow = self.workflow_service.run_profile_flow(db, tenant_id=tenant_id)
+                    result = {"response_type": "workflow_result", "summary": "Profile workflow completed.", "data": flow, "warnings": []}
+                except Exception as exc:
+                    logger.error("Profile workflow failed: %s", exc, exc_info=True)
+                    result = {"response_type": "error", "summary": f"Profile workflow failed: {exc}", "data": {}, "warnings": ["workflow_error"]}
         elif action == "dashboard":
             if not self.workflow_service.has_capacity(db, tenant_id=tenant_id, workflow_type="dashboard"):
                 queued = self.degradation.enqueue(
@@ -166,13 +170,17 @@ class ConversationService:
                     "warnings": [],
                 }
             else:
-                flow = self.workflow_service.run_dashboard_flow(db, tenant_id=tenant_id)
-                result = {
-                    "response_type": "workflow_result",
-                    "summary": "Dashboard generation completed.",
-                    "data": flow,
-                    "warnings": [],
-                }
+                try:
+                    flow = self.workflow_service.run_dashboard_flow(db, tenant_id=tenant_id)
+                    result = {
+                        "response_type": "workflow_result",
+                        "summary": "Dashboard generation completed.",
+                        "data": flow,
+                        "warnings": [],
+                    }
+                except Exception as exc:
+                    logger.error("Dashboard workflow failed: %s", exc, exc_info=True)
+                    result = {"response_type": "error", "summary": f"Dashboard workflow failed: {exc}", "data": {}, "warnings": ["workflow_error"]}
         else:
             if not self.workflow_service.has_capacity(db, tenant_id=tenant_id, workflow_type="memo"):
                 queued = self.degradation.enqueue(
@@ -185,8 +193,12 @@ class ConversationService:
                     "warnings": [],
                 }
             else:
-                flow = self.workflow_service.run_memo_flow(db, tenant_id=tenant_id)
-                result = {"response_type": "workflow_result", "summary": "Weekly memo generated.", "data": flow, "warnings": []}
+                try:
+                    flow = self.workflow_service.run_memo_flow(db, tenant_id=tenant_id)
+                    result = {"response_type": "workflow_result", "summary": "Weekly memo generated.", "data": flow, "warnings": []}
+                except Exception as exc:
+                    logger.error("Memo workflow failed: %s", exc, exc_info=True)
+                    result = {"response_type": "error", "summary": f"Memo workflow failed: {exc}", "data": {}, "warnings": ["workflow_error"]}
 
         result["meta"] = {
             "intent_action": action,

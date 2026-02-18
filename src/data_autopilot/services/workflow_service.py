@@ -133,7 +133,7 @@ class WorkflowService:
                 WorkflowRun.status.in_(["failed", "partial_failure"]),
             )
             .order_by(WorkflowRun.started_at.desc())
-        ).scalar_one_or_none()
+        ).scalars().first()
         if resumable is not None:
             resumable.status = "running"
             resumable.finished_at = None
