@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from data_autopilot.services.mode1.models import OutputFormat, ProviderResult
+from data_autopilot.services.mode1.models import (
+    Interpretation,
+    OutputFormat,
+    Provenance,
+    ProviderResult,
+)
 
 
 class ResponseFormatter:
-    def format(self, result: ProviderResult, output: OutputFormat = OutputFormat.TABLE) -> dict[str, Any]:
+    def format(
+        self, result: ProviderResult, output: OutputFormat = OutputFormat.TABLE
+    ) -> dict[str, Any]:
         if result.error:
             return {
                 "response_type": "error",
@@ -42,6 +49,57 @@ class ResponseFormatter:
                 "truncated": result.truncated,
             },
             "warnings": ["truncated"] if result.truncated else [],
+        }
+
+    def format_rich(
+        self,
+        records: list[dict[str, Any]],
+        provenance: Provenance,
+        interpretation: Interpretation | None = None,
+        output_format: OutputFormat = OutputFormat.TABLE,
+        truncated: bool = False,
+        total_available: int = 0,
+    ) -> dict[str, Any]:
+        """Format with provenance footer and optional interpretation."""
+        table = self._to_markdown_table(records)
+
+        summary_parts = [f"Fetched {len(records)} records from {provenance.source}."]
+        if truncated:
+            summary_parts.append(f"(truncated from {total_available} total)")
+
+        data: dict[str, Any] = {
+            "table": table,
+            "records": records,
+            "total_available": total_available or len(records),
+            "truncated": truncated,
+            "provenance": {
+                "source": provenance.source,
+                "timestamp": provenance.timestamp.isoformat(),
+                "chain": provenance.chain,
+                "record_count": provenance.record_count,
+                "truncated": provenance.truncated,
+                "params": provenance.params,
+                "filters": provenance.filters,
+            },
+            "provenance_footer": provenance.format_footer(),
+        }
+
+        warnings: list[str] = []
+        if truncated:
+            warnings.append("truncated")
+
+        if interpretation:
+            data["interpretation"] = {
+                "text": interpretation.text,
+                "stats": interpretation.stats,
+                "disclaimer": interpretation.disclaimer,
+            }
+
+        return {
+            "response_type": "blockchain_result",
+            "summary": " ".join(summary_parts),
+            "data": data,
+            "warnings": warnings,
         }
 
     @staticmethod

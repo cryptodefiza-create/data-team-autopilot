@@ -35,6 +35,7 @@ class ConversationService:
         if any(token in text for token in {
             "token", "holders", "solana", "ethereum", "wallet", "nft",
             "blockchain", "on-chain", "$", "mint", "defi",
+            "tvl", "dex", "pair", "protocol", "liquidity",
         }):
             return "blockchain"
         return "query"
@@ -134,11 +135,11 @@ class ConversationService:
             "warnings": [],
         }
 
-    def _blockchain_response(self, message: str) -> dict:
+    def _blockchain_response(self, message: str, session_id: str = "default") -> dict:
         from data_autopilot.api.state import mode1_fetcher
 
         try:
-            return mode1_fetcher.handle(message)
+            return mode1_fetcher.handle(message, session_id=session_id)
         except Exception as exc:
             logger.error("Blockchain fetch failed: %s", exc, exc_info=True)
             return {

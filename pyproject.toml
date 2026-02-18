@@ -15,7 +15,8 @@ dependencies = [
   "sqlalchemy==2.0.34",
   "alembic==1.13.2",
   "redis==5.0.8",
-  "httpx==0.28.1"
+  "httpx==0.28.1",
+  "openpyxl==3.1.5"
 ]
 
 [project.optional-dependencies]

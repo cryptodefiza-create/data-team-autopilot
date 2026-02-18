@@ -28,6 +28,14 @@ _ENTITY_KEYWORDS: dict[str, Entity] = {
     "log": Entity.LOGS,
     "logs": Entity.LOGS,
     "history": Entity.PRICE_HISTORY,
+    "dex": Entity.DEX_PAIR,
+    "pair": Entity.DEX_PAIR,
+    "pairs": Entity.DEX_PAIR,
+    "liquidity": Entity.DEX_PAIR,
+    "tvl": Entity.PROTOCOL_TVL,
+    "protocol": Entity.PROTOCOL_TVL,
+    "fees": Entity.PROTOCOL_TVL,
+    "revenue": Entity.PROTOCOL_TVL,
 }
 
 _CHAIN_KEYWORDS: dict[str, Chain] = {

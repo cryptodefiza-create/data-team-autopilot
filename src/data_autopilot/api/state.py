@@ -46,6 +46,8 @@ def _build_mode1_fetcher():
     from data_autopilot.services.mode1.request_parser import RequestParser
     from data_autopilot.services.providers.alchemy import AlchemyProvider
     from data_autopilot.services.providers.coingecko import CoinGeckoProvider
+    from data_autopilot.services.providers.defillama import DefiLlamaProvider
+    from data_autopilot.services.providers.dexscreener import DexScreenerProvider
     from data_autopilot.services.providers.helius import HeliusProvider
 
     s = get_settings()
@@ -53,6 +55,8 @@ def _build_mode1_fetcher():
         "helius": HeliusProvider(api_key=s.helius_api_key),
         "alchemy": AlchemyProvider(api_key=s.alchemy_api_key),
         "coingecko": CoinGeckoProvider(),
+        "dexscreener": DexScreenerProvider(),
+        "defillama": DefiLlamaProvider(),
     }
     key_mgr = PlatformKeyManager()
     if s.helius_api_key:

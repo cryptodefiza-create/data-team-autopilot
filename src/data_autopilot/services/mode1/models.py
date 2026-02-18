@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -10,6 +11,8 @@ class Intent(str, Enum):
     SNAPSHOT = "snapshot"
     TREND = "trend"
     LOOKUP = "lookup"
+    FOLLOW_UP = "follow_up"
+    EXPORT = "export"
 
 
 class Chain(str, Enum):
@@ -28,11 +31,16 @@ class Entity(str, Enum):
     TRANSACTION_HISTORY = "transaction_history"
     NFT_ASSET = "nft_asset"
     LOGS = "logs"
+    DEX_PAIR = "dex_pair"
+    PROTOCOL_TVL = "protocol_tvl"
+    CHAIN_TVL = "chain_tvl"
 
 
 class OutputFormat(str, Enum):
     TABLE = "table"
     RAW = "raw"
+    XLSX = "xlsx"
+    CSV = "csv"
 
 
 class RoutingMode(str, Enum):
@@ -72,3 +80,48 @@ class ProviderResult(BaseModel):
     @property
     def succeeded(self) -> bool:
         return self.error is None
+
+
+class Provenance(BaseModel):
+    source: str = ""
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    chain: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    record_count: int = 0
+    truncated: bool = False
+    sampling_note: str | None = None
+    disclaimer: str | None = None
+    filters: dict[str, Any] = Field(default_factory=dict)
+
+    def format_footer(self) -> str:
+        lines = [
+            "\u2500" * 35,
+            f"Source: {self.source}",
+            f"Queried: {self.timestamp.strftime('%b %d, %Y %H:%M UTC')}",
+            f"Records: {self.record_count:,}"
+            + (" (truncated)" if self.truncated else " (complete)"),
+        ]
+        if self.sampling_note:
+            lines.append(f"Note: {self.sampling_note}")
+        if self.disclaimer:
+            lines.append(f"Disclaimer: {self.disclaimer}")
+        lines.append("\u2500" * 35)
+        return "\n".join(lines)
+
+
+class Interpretation(BaseModel):
+    text: str = ""
+    stats: dict[str, Any] = Field(default_factory=dict)
+    disclaimer: str = "These are data observations, not financial or investment advice."
+
+
+class ConversationTurn(BaseModel):
+    request: DataRequest
+    data: list[dict[str, Any]] = Field(default_factory=list)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class RawDataset(BaseModel):
+    records: list[dict[str, Any]] = Field(default_factory=list)
+    source: str = "file_upload"
+    record_count: int = 0

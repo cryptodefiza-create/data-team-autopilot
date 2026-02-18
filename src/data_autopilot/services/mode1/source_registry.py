@@ -22,8 +22,26 @@ SOURCE_REGISTRY: dict[tuple[Chain, Entity], tuple[str, str]] = {
     (Chain.ETHEREUM, Entity.TOKEN_PRICE): ("coingecko", "get_price"),
     (Chain.SOLANA, Entity.PRICE_HISTORY): ("coingecko", "get_price_history"),
     (Chain.ETHEREUM, Entity.PRICE_HISTORY): ("coingecko", "get_price_history"),
+    # DexScreener — DEX pair data
+    (Chain.CROSS_CHAIN, Entity.DEX_PAIR): ("dexscreener", "search_pairs"),
+    (Chain.SOLANA, Entity.DEX_PAIR): ("dexscreener", "get_pair"),
+    (Chain.ETHEREUM, Entity.DEX_PAIR): ("dexscreener", "get_pair"),
+    # DefiLlama — protocol + chain TVL
+    (Chain.CROSS_CHAIN, Entity.PROTOCOL_TVL): ("defillama", "get_tvl"),
+    (Chain.CROSS_CHAIN, Entity.CHAIN_TVL): ("defillama", "get_chain_tvl"),
+    (Chain.SOLANA, Entity.PROTOCOL_TVL): ("defillama", "get_tvl"),
+    (Chain.ETHEREUM, Entity.PROTOCOL_TVL): ("defillama", "get_tvl"),
+}
+
+# Fallback mappings: if primary provider fails, try fallback
+FALLBACK_REGISTRY: dict[tuple[str, str], tuple[str, str]] = {
+    ("coingecko", "get_price"): ("dexscreener", "get_price"),
 }
 
 
 def lookup(chain: Chain, entity: Entity) -> tuple[str, str] | None:
     return SOURCE_REGISTRY.get((chain, entity))
+
+
+def lookup_fallback(provider: str, method: str) -> tuple[str, str] | None:
+    return FALLBACK_REGISTRY.get((provider, method))
