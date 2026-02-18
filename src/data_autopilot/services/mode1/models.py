@@ -369,3 +369,55 @@ class DAGNode(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     status: str = "pending"  # "pending" | "running" | "completed" | "failed"
     error: str | None = None
+
+
+# ---------- Phase 7: Team Features + Delivery Channels ----------
+
+
+class TeamRole(str, Enum):
+    ADMIN = "admin"
+    ENGINEER = "engineer"
+    VIEWER = "viewer"
+
+
+class TeamMember(BaseModel):
+    user_id: str = ""
+    org_id: str = ""
+    role: TeamRole = TeamRole.VIEWER
+    name: str = ""
+
+
+class AgentManagerConfig(BaseModel):
+    org_id: str = ""
+    allowed_schemas: list[str] = Field(default_factory=list)
+    delivery_channels: list[str] = Field(default_factory=list)  # "slack" | "telegram" | "email"
+    memo_schedule: str = "weekly"  # "weekly" | "daily"
+    memo_day: str = "Monday"
+    memo_hour: int = 6  # UTC
+
+
+class WeeklyMemo(BaseModel):
+    org_id: str = ""
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    kpis: dict[str, Any] = Field(default_factory=dict)
+    narrative: str = ""
+    contract_version: int = 0
+    stale_warning: str | None = None
+    delivered_via: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class FreshnessResult(BaseModel):
+    fresh: bool = True
+    stale_pipelines: list[str] = Field(default_factory=list)
+    hours_since_last_sync: float = 0.0
+    message: str = ""
+
+
+class CrossSourceResult(BaseModel):
+    public_records: int = 0
+    warehouse_records: int = 0
+    joined_records: int = 0
+    join_key: str = ""
+    records: list[dict[str, Any]] = Field(default_factory=list)
