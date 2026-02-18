@@ -1,10 +1,6 @@
 """Phase 3 tests: Persistence, RBAC, JSONB storage, dedup, tier gating."""
 
-import hashlib
-import json
-from datetime import datetime, timezone
 
-from data_autopilot.services.mode1.models import SnapshotRecord
 from data_autopilot.services.mode1.persistence import (
     MockStorageBackend,
     PersistenceManager,

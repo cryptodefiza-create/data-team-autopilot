@@ -1,11 +1,11 @@
 from data_autopilot.agents.contracts import AgentPlan
 from data_autopilot.config.settings import get_settings
-from data_autopilot.services.cost_guard import CostGuard
+from data_autopilot.services.cost_limiter import SlidingWindowCostLimiter
 from data_autopilot.services.sql_safety import SqlSafetyEngine
 
 
 class Critic:
-    def __init__(self, safety: SqlSafetyEngine, cost_guard: CostGuard) -> None:
+    def __init__(self, safety: SqlSafetyEngine, cost_guard: SlidingWindowCostLimiter) -> None:
         self.safety = safety
         self.cost_guard = cost_guard
         self.settings = get_settings()

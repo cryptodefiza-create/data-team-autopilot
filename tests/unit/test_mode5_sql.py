@@ -9,9 +9,7 @@ from data_autopilot.services.mode1.models import (
 )
 from data_autopilot.services.mode1.nl_to_sql import NLToSQL
 from data_autopilot.services.mode1.sql_validator import (
-    InvalidTableError,
     SQLValidator,
-    UnsafeSQLError,
 )
 
 

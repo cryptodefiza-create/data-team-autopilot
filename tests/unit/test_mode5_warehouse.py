@@ -1,7 +1,7 @@
 """Phase 5 tests: Warehouse connection, schema profiling, entity aliases, dashboards."""
 
 from data_autopilot.services.mode1.entity_aliases import EntityAliasManager
-from data_autopilot.services.mode1.models import ColumnProfile, SchemaProfile, TableProfile
+from data_autopilot.services.mode1.models import ColumnProfile
 from data_autopilot.services.mode1.postgres_connector import PostgresReadConnector
 from data_autopilot.services.mode1.schema_profiler import SchemaProfiler
 from data_autopilot.services.mode1.warehouse_dashboard import WarehouseDashboard

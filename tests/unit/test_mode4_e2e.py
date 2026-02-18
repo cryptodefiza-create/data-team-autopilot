@@ -7,7 +7,7 @@ from data_autopilot.services.mode1.business_query import BusinessQueryEngine
 from data_autopilot.services.mode1.credential_flow import CredentialFlow
 from data_autopilot.services.mode1.credential_vault import CredentialVault
 from data_autopilot.services.mode1.dashboard_builder import DashboardBuilder
-from data_autopilot.services.mode1.models import ProviderResult, SnapshotRecord, ThinContract
+from data_autopilot.services.mode1.models import ProviderResult, SnapshotRecord
 from data_autopilot.services.mode1.persistence import PersistenceManager
 from data_autopilot.services.mode1.thin_contract import ThinContractManager
 

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from uuid import uuid4
 
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from data_autopilot.config.settings import get_settings
 from data_autopilot.models.entities import (
     AlertEvent,
     AlertNotification,
@@ -14,11 +17,15 @@ from data_autopilot.models.entities import (
     Tenant,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class NotificationService:
     def __init__(self) -> None:
         self.max_retries = 3
         self.retry_backoff_minutes = [1, 4, 16]
+        self.settings = get_settings()
+        self._http = httpx.Client(timeout=10)
 
     def _tenant(self, db: Session, tenant_id: str) -> Tenant:
         tenant = db.execute(select(Tenant).where(Tenant.id == tenant_id)).scalar_one_or_none()
@@ -63,12 +70,59 @@ class NotificationService:
         db.commit()
         return sanitized
 
-    def _attempt_send(self, channel_target: str, retry_count: int) -> tuple[bool, str | None]:
-        target = channel_target.strip().lower()
-        if target.startswith("fail://"):
+    def _attempt_send(
+        self,
+        channel_target: str,
+        retry_count: int,
+        payload: dict | None = None,
+        channel_type: str = "",
+    ) -> tuple[bool, str | None]:
+        target = channel_target.strip()
+        target_lower = target.lower()
+
+        # Test-only schemes for integration tests
+        if target_lower.startswith("fail://"):
             return False, "simulated delivery failure"
-        if target.startswith("flaky://") and retry_count < 1:
+        if target_lower.startswith("flaky://") and retry_count < 1:
             return False, "simulated transient delivery failure"
+
+        body = payload or {}
+
+        # Webhook delivery: POST JSON to the target URL
+        if target_lower.startswith("http://") or target_lower.startswith("https://"):
+            resp = self._http.post(target, json=body)
+            if resp.status_code >= 400:
+                error = f"Webhook returned HTTP {resp.status_code}: {resp.text[:200]}"
+                logger.warning("Notification delivery failed to %s: %s", target, error)
+                return False, error
+            return True, None
+
+        # Slack delivery via Slack API
+        if channel_type == "slack" or target_lower.startswith("#"):
+            token = self.settings.slack_bot_token
+            if not token:
+                logger.info("Slack notification skipped (no bot token): %s", target)
+                return True, None
+            resp = self._http.post(
+                "https://slack.com/api/chat.postMessage",
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "channel": target,
+                    "text": f"*{body.get('title', 'Alert')}*\n{body.get('message', '')}",
+                },
+            )
+            resp_body = resp.json()
+            if not resp_body.get("ok"):
+                error = f"Slack API error: {resp_body.get('error', 'unknown')}"
+                logger.warning("Slack notification failed for %s: %s", target, error)
+                return False, error
+            return True, None
+
+        # Email and other channel types: log delivery (no SMTP configured)
+        logger.info(
+            "Notification delivered via %s to %s: %s",
+            channel_type or "default", target, body.get("title", ""),
+        )
         return True, None
 
     def _next_retry(self, retry_count: int) -> datetime:
@@ -83,7 +137,10 @@ class NotificationService:
         target: str,
         recipient: str | None,
     ) -> AlertNotification:
-        sent, error = self._attempt_send(target, retry_count=0)
+        alert_payload = {"title": alert.title, "message": alert.message}
+        sent, error = self._attempt_send(
+            target, retry_count=0, payload=alert_payload, channel_type=channel_type,
+        )
         status = AlertNotificationStatus.SENT if sent else AlertNotificationStatus.FAILED
         return AlertNotification(
             id=f"ntf_{uuid4().hex[:12]}",
@@ -94,7 +151,7 @@ class NotificationService:
             channel_type=channel_type,
             channel_target=target,
             recipient=recipient,
-            payload={"title": alert.title, "message": alert.message},
+            payload=alert_payload,
             status=status,
             retry_count=0,
             next_retry_at=None if sent else self._next_retry(0),
@@ -190,7 +247,12 @@ class NotificationService:
         retried: list[AlertNotification] = []
         for row in rows:
             attempt = int(row.retry_count or 0) + 1
-            sent, error = self._attempt_send(row.channel_target, retry_count=attempt)
+            sent, error = self._attempt_send(
+                row.channel_target,
+                retry_count=attempt,
+                payload=row.payload if isinstance(row.payload, dict) else {},
+                channel_type=row.channel_type or "",
+            )
             if sent:
                 row.status = AlertNotificationStatus.SENT
                 row.sent_at = datetime.utcnow()

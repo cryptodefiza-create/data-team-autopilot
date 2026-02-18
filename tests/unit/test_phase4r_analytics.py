@@ -7,7 +7,6 @@ from data_autopilot.services.mode1.onchain_analytics import OnChainAnalytics
 from data_autopilot.services.mode1.persistence import PersistenceManager
 from data_autopilot.services.mode1.wallet_labeler import (
     KNOWN_EXCHANGE_WALLETS,
-    WalletLabeler,
 )
 
 

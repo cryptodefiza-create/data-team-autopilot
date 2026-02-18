@@ -11,7 +11,6 @@ from data_autopilot.services.mode1.models import (
     PipelineStatus,
     SemanticContract,
 )
-from data_autopilot.services.mode1.stale_guard import StaleDataGuard
 from data_autopilot.services.mode1.weekly_memo import WeeklyMemoScheduler
 
 

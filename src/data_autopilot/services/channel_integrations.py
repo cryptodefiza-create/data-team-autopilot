@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import re
 import time
 
@@ -10,6 +11,8 @@ import httpx
 
 from data_autopilot.config.settings import get_settings
 from data_autopilot.services.redis_store import RedisStore
+
+logger = logging.getLogger(__name__)
 
 
 class ChannelIntegrationsService:
@@ -98,23 +101,37 @@ class ChannelIntegrationsService:
 
         return summary or "Completed."
 
-    def send_slack_message(self, channel: str, text: str, thread_ts: str | None = None) -> None:
+    def send_slack_message(self, channel: str, text: str, thread_ts: str | None = None) -> bool:
         if not self.settings.slack_bot_token:
-            return
+            return False
         payload: dict[str, str] = {"channel": channel, "text": text}
         if thread_ts:
             payload["thread_ts"] = thread_ts
-        self.http_client.post(
+        resp = self.http_client.post(
             "https://slack.com/api/chat.postMessage",
             headers={"Authorization": f"Bearer {self.settings.slack_bot_token}"},
             json=payload,
         )
+        body = resp.json()
+        if not body.get("ok"):
+            logger.error(
+                "Slack API error on channel %s: %s", channel, body.get("error", "unknown")
+            )
+            return False
+        return True
 
-    def send_telegram_message(self, chat_id: str, text: str) -> None:
+    def send_telegram_message(self, chat_id: str, text: str) -> bool:
         if not self.settings.telegram_bot_token:
-            return
+            return False
         url = f"https://api.telegram.org/bot{self.settings.telegram_bot_token}/sendMessage"
-        self.http_client.post(url, json={"chat_id": chat_id, "text": text})
+        resp = self.http_client.post(url, json={"chat_id": chat_id, "text": text})
+        if resp.status_code != 200:
+            logger.error(
+                "Telegram API error for chat %s: HTTP %d %s",
+                chat_id, resp.status_code, resp.text[:200],
+            )
+            return False
+        return True
 
     @staticmethod
     def parse_slack_event(raw_json: bytes) -> dict:

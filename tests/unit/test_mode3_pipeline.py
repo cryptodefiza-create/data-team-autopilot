@@ -21,7 +21,6 @@ from data_autopilot.services.mode1.models import (
 from data_autopilot.services.mode1.neon_cleanup import NeonCleanup, NeonProject
 from data_autopilot.services.mode1.persistence import PersistenceManager
 from data_autopilot.services.mode1.pipeline_monitor import PipelineMonitor
-from data_autopilot.services.mode1.pipeline_scheduler import PipelineScheduler
 from data_autopilot.services.mode1.platform_keys import PlatformKeyManager
 from data_autopilot.services.mode1.request_parser import RequestParser
 from data_autopilot.services.mode1.snapshot_pipeline import SnapshotPipeline
@@ -123,7 +122,7 @@ def test_pipeline_failure_handling() -> None:
     """3.8: Provider error → retries 3x, then marks as failed."""
     _, _, pipeline_svc = _make_pipeline_env(should_fail=True)
 
-    request = DataRequest(
+    DataRequest(
         raw_message="Track failing",
         intent=Intent.TRACK,
         entity=Entity.TOKEN_PRICE,

@@ -1,28 +1,19 @@
 """Phase 6 tests: End-to-end contract → transform → promote flow, memo with version."""
 
-from datetime import datetime, timezone
 
 from data_autopilot.services.mode1.contract_version import ContractVersionManager
-from data_autopilot.services.mode1.mart_generator import MartGenerator
 from data_autopilot.services.mode1.models import (
     ContractDefaults,
     EntityConfig,
     MetricDefinition,
-    SemanticContract,
-    SnapshotRecord,
-    StagingTable,
 )
-from data_autopilot.services.mode1.persistence import PersistenceManager
-from data_autopilot.services.mode1.promotion_gate import PromotionGate
 from data_autopilot.services.mode1.semantic_contract import SemanticContractManager
-from data_autopilot.services.mode1.staging_builder import StagingBuilder
-from data_autopilot.services.mode1.transform_dag import TransformDAG
 
 
 def test_memo_with_contract_version() -> None:
     """6.13: Generate memo after contract change → memo notes version change."""
     manager = SemanticContractManager()
-    contract = manager.create(
+    manager.create(
         org_id="org_memo",
         entities=[EntityConfig(name="order", primary_key="order_id")],
         metrics=[MetricDefinition(

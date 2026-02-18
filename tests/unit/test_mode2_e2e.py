@@ -4,11 +4,8 @@ from unittest.mock import MagicMock, patch
 
 from data_autopilot.services.mode1.live_fetcher import LiveFetcher
 from data_autopilot.services.mode1.models import (
-    Chain,
-    DataRequest,
     Entity,
     Intent,
-    OutputFormat,
     ProviderResult,
     RoutingDecision,
     RoutingMode,

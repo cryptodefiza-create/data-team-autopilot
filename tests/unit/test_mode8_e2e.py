@@ -1,12 +1,11 @@
 """Phase 8 tests: Full E2E flows across modes, cross-mode, landing page."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from data_autopilot.services.mode1.business_query import BusinessQueryEngine
 from data_autopilot.services.mode1.credential_flow import CredentialFlow
 from data_autopilot.services.mode1.credential_vault import CredentialVault
-from data_autopilot.services.mode1.cross_source import CrossSourceJoin
 from data_autopilot.services.mode1.dashboard_builder import DashboardBuilder
 from data_autopilot.services.mode1.entity_aliases import EntityAliasManager
 from data_autopilot.services.mode1.historical_query import HistoricalQuery

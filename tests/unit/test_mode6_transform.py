@@ -11,7 +11,6 @@ from data_autopilot.services.mode1.models import (
     MetricDefinition,
     SemanticContract,
     SnapshotRecord,
-    StagingTable,
 )
 from data_autopilot.services.mode1.persistence import PersistenceManager
 from data_autopilot.services.mode1.promotion_gate import PromotionGate

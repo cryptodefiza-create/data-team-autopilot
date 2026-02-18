@@ -5,16 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import openpyxl
 
-from data_autopilot.services.mode1.conversation_memory import ConversationMemory
 from data_autopilot.services.mode1.data_transformer import DataTransformer
 from data_autopilot.services.mode1.file_upload import FileUploadHandler
 from data_autopilot.services.mode1.live_fetcher import LiveFetcher
 from data_autopilot.services.mode1.models import (
-    Chain,
-    DataRequest,
-    Entity,
-    Intent,
-    OutputFormat,
     ProviderResult,
     RoutingDecision,
     RoutingMode,

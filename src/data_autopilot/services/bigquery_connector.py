@@ -23,6 +23,7 @@ class BigQueryConnector:
     def __init__(self, cache: CacheService | None = None) -> None:
         self.cache = cache or CacheService()
         self.settings = get_settings()
+        self._client_cache: dict[str, Any] = {}
 
     def _resolve_service_account(self, service_account_json: dict | None) -> dict | None:
         if service_account_json:
@@ -36,6 +37,20 @@ class BigQueryConnector:
         return parsed
 
     def _build_client(self, service_account_json: dict | None = None):
+        resolved = self._resolve_service_account(service_account_json)
+        if not resolved:
+            raise RuntimeError(
+                "No BigQuery credentials available. "
+                "Set BIGQUERY_SERVICE_ACCOUNT_JSON or connect a tenant service account."
+            )
+
+        cache_key = hashlib.sha256(
+            json.dumps(resolved, sort_keys=True).encode()
+        ).hexdigest()
+
+        if cache_key in self._client_cache:
+            return self._client_cache[cache_key]
+
         try:
             from google.cloud import bigquery  # type: ignore
             from google.oauth2 import service_account  # type: ignore
@@ -44,19 +59,14 @@ class BigQueryConnector:
                 "BigQuery live mode requires google-cloud-bigquery and google-auth"
             ) from exc
 
-        resolved = self._resolve_service_account(service_account_json)
-        credentials = None
-        if resolved:
-            credentials = service_account.Credentials.from_service_account_info(resolved)
-        else:
-            raise RuntimeError(
-                "No BigQuery credentials available. Set BIGQUERY_SERVICE_ACCOUNT_JSON or connect a tenant service account."
-            )
-        return bigquery.Client(
+        credentials = service_account.Credentials.from_service_account_info(resolved)
+        client = bigquery.Client(
             project=self.settings.bigquery_project_id,
             credentials=credentials,
             location=self.settings.bigquery_location,
         )
+        self._client_cache[cache_key] = client
+        return client
 
     def test_connection(self, service_account_json: dict | None = None) -> dict:
         if self.settings.bigquery_mock_mode:
