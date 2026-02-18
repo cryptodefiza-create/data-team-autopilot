@@ -39,11 +39,79 @@ class LLMResult:
         return self.error is None
 
 
-def _call_provider(provider: LLMProvider, system_prompt: str, user_prompt: str) -> LLMResult:
-    """Execute a single LLM call against one provider. Never raises."""
+def _call_anthropic(provider: LLMProvider, system_prompt: str, user_prompt: str) -> LLMResult:
+    """Execute a single LLM call against the Anthropic Messages API. Never raises."""
     start = time.perf_counter()
     try:
         base = provider.base_url.rstrip("/")
+        url = f"{base}/messages"
+        system_prompt_with_json = system_prompt + " You MUST respond with valid JSON only, no markdown or extra text."
+        payload: dict = {
+            "model": provider.model,
+            "max_tokens": 4096,
+            "temperature": provider.temperature,
+            "system": system_prompt_with_json,
+            "messages": [
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+        headers = {
+            "x-api-key": provider.api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+
+        with httpx.Client(timeout=provider.timeout_seconds, follow_redirects=True) as client:
+            response = client.post(url, headers=headers, json=payload)
+            if response.status_code >= 400:
+                error_body = response.text[:500]
+                raise RuntimeError(
+                    f"{response.status_code} from {url}: {error_body}"
+                )
+            body = response.json()
+
+        content_blocks = body.get("content")
+        if not isinstance(content_blocks, list) or not content_blocks:
+            raise RuntimeError("Anthropic response missing content")
+
+        raw_content = content_blocks[0].get("text", "")
+        if not isinstance(raw_content, str) or not raw_content.strip():
+            raise RuntimeError("Anthropic response content is empty")
+
+        parsed = json.loads(raw_content)
+        if not isinstance(parsed, dict):
+            raise RuntimeError("LLM JSON response must be an object")
+
+        usage = body.get("usage", {})
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        return LLMResult(
+            provider_name=provider.name,
+            model=provider.model,
+            content=parsed,
+            latency_ms=round(latency_ms, 2),
+            input_tokens=int(usage.get("input_tokens", 0)),
+            output_tokens=int(usage.get("output_tokens", 0)),
+        )
+    except Exception as exc:
+        latency_ms = (time.perf_counter() - start) * 1000
+        return LLMResult(
+            provider_name=provider.name,
+            model=provider.model,
+            content={},
+            latency_ms=round(latency_ms, 2),
+            error=str(exc),
+        )
+
+
+def _call_provider(provider: LLMProvider, system_prompt: str, user_prompt: str) -> LLMResult:
+    """Execute a single LLM call against one provider. Never raises."""
+    base = provider.base_url.rstrip("/")
+    if "anthropic.com" in base:
+        return _call_anthropic(provider, system_prompt, user_prompt)
+
+    start = time.perf_counter()
+    try:
         url = f"{base}/chat/completions"
         system_prompt_with_json = system_prompt + " You MUST respond with valid JSON only, no markdown or extra text."
         payload: dict = {
