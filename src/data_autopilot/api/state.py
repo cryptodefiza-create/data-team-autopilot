@@ -39,6 +39,38 @@ channel_integrations_service = ChannelIntegrationsService()
 integration_binding_service = IntegrationBindingService()
 
 
+def _build_mode1_fetcher():
+    from data_autopilot.config.settings import get_settings
+    from data_autopilot.services.mode1.live_fetcher import LiveFetcher
+    from data_autopilot.services.mode1.platform_keys import PlatformKeyManager
+    from data_autopilot.services.mode1.request_parser import RequestParser
+    from data_autopilot.services.providers.alchemy import AlchemyProvider
+    from data_autopilot.services.providers.coingecko import CoinGeckoProvider
+    from data_autopilot.services.providers.helius import HeliusProvider
+
+    s = get_settings()
+    providers = {
+        "helius": HeliusProvider(api_key=s.helius_api_key),
+        "alchemy": AlchemyProvider(api_key=s.alchemy_api_key),
+        "coingecko": CoinGeckoProvider(),
+    }
+    key_mgr = PlatformKeyManager()
+    if s.helius_api_key:
+        key_mgr.register("helius", [s.helius_api_key])
+    if s.alchemy_api_key:
+        key_mgr.register("alchemy", [s.alchemy_api_key])
+    parser = RequestParser()
+    return LiveFetcher(
+        providers=providers,
+        key_manager=key_mgr,
+        parser=parser,
+        tier=s.blockchain_provider_tier,
+    )
+
+
+mode1_fetcher = _build_mode1_fetcher()
+
+
 def auto_alert_from_workflow_result(db: Session, org_id: str, workflow_type: str, result: dict) -> None:
     if result.get("workflow_status") != "partial_failure":
         return

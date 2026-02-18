@@ -32,6 +32,11 @@ class ConversationService:
             return "profile"
         if any(token in text for token in {"memo", "weekly", "summary", "report"}):
             return "memo"
+        if any(token in text for token in {
+            "token", "holders", "solana", "ethereum", "wallet", "nft",
+            "blockchain", "on-chain", "$", "mint", "defi",
+        }):
+            return "blockchain"
         return "query"
 
     def _interpret(self, db: Session, tenant_id: str, message: str) -> dict:
@@ -41,7 +46,7 @@ class ConversationService:
             system_prompt = (
                 "You route user requests for a data agent. "
                 "Return JSON with keys action, sql, reason. "
-                "action must be one of: query, profile, dashboard, memo. "
+                "action must be one of: query, profile, dashboard, memo, blockchain. "
                 "Only provide sql when action=query."
             )
             user_prompt = f"Request: {message}"
@@ -54,7 +59,7 @@ class ConversationService:
                     raise RuntimeError(result.error)
                 parsed = result.content
                 candidate = str(parsed.get("action", "")).strip().lower()
-                if candidate in {"query", "profile", "dashboard", "memo"}:
+                if candidate in {"query", "profile", "dashboard", "memo", "blockchain"}:
                     action = candidate
                 sql_val = parsed.get("sql", "")
                 if isinstance(sql_val, str):
@@ -129,11 +134,27 @@ class ConversationService:
             "warnings": [],
         }
 
+    def _blockchain_response(self, message: str) -> dict:
+        from data_autopilot.api.state import mode1_fetcher
+
+        try:
+            return mode1_fetcher.handle(message)
+        except Exception as exc:
+            logger.error("Blockchain fetch failed: %s", exc, exc_info=True)
+            return {
+                "response_type": "error",
+                "summary": f"Blockchain data fetch failed: {exc}",
+                "data": {},
+                "warnings": ["blockchain_error"],
+            }
+
     def respond(self, db: Session, tenant_id: str, user_id: str, message: str) -> dict:
         interpreted = self._interpret(db, tenant_id, message)
         action = interpreted["action"]
         result: dict
-        if action == "query":
+        if action == "blockchain":
+            result = self._blockchain_response(message)
+        elif action == "query":
             result = self._query_response(
                 db=db,
                 tenant_id=tenant_id,

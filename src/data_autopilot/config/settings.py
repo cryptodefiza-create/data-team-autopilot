@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = Field(default="")
     telegram_default_org_id: str = Field(default="")
 
+    # Blockchain data providers (Mode 1)
+    helius_api_key: str = Field(default="")
+    alchemy_api_key: str = Field(default="")
+    blockchain_provider_tier: str = Field(default="free")
+
     @model_validator(mode="after")
     def validate_runtime_modes(self) -> "Settings":
         # Hard safety gate: never allow real execution while connector is in mock mode.
