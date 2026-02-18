@@ -65,14 +65,9 @@ class PromotionGate:
         if not mart.records:
             return ValidationCheck(name="null_rate", passed=True, message="No records to check")
 
-        total_cells = 0
-        null_cells = 0
-        for record in mart.records:
-            for value in record.values():
-                total_cells += 1
-                if value is None:
-                    null_cells += 1
-
+        all_values = [v for record in mart.records for v in record.values()]
+        total_cells = len(all_values)
+        null_cells = sum(1 for v in all_values if v is None)
         rate = null_cells / total_cells if total_cells > 0 else 0.0
         if rate <= max_rate:
             return ValidationCheck(
@@ -128,20 +123,18 @@ class PromotionGate:
 
         for join_def in joins:
             if join_def.fan_out_risk:
-                # Check if actual row count exceeds expected
                 entity_config = contract.get_entity(entity_name)
-                if entity_config and mart.row_count > len(set(
-                    r.get(entity_config.primary_key) for r in mart.records
-                )):
-                    return ValidationCheck(
-                        name="fan_out", passed=False,
-                        message=(
-                            f"Fan-out detected: {mart.row_count} rows but only "
-                            f"{len(set(r.get(entity_config.primary_key) for r in mart.records))} "
-                            f"unique {entity_config.primary_key} values. "
-                            f"Join {join_def.left} ↔ {join_def.right} may be multiplying rows."
-                        ),
-                    )
+                if entity_config:
+                    unique_keys = {r.get(entity_config.primary_key) for r in mart.records}
+                    if mart.row_count > len(unique_keys):
+                        return ValidationCheck(
+                            name="fan_out", passed=False,
+                            message=(
+                                f"Fan-out detected: {mart.row_count} rows but only "
+                                f"{len(unique_keys)} unique {entity_config.primary_key} values. "
+                                f"Join {join_def.left} ↔ {join_def.right} may be multiplying rows."
+                            ),
+                        )
 
         return ValidationCheck(name="fan_out", passed=True, message="No fan-out detected")
 

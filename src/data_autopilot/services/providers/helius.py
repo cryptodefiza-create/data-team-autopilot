@@ -17,21 +17,11 @@ class HeliusProvider(BaseProvider):
         super().__init__(api_key=api_key, base_url=url)
 
     def fetch(self, method: str, params: dict[str, Any]) -> ProviderResult:
-        dispatch = {
+        return self._dispatch_fetch(method, params, {
             "get_token_accounts": self._get_token_accounts,
             "get_asset": self._get_asset,
             "get_signatures": self._get_signatures,
-        }
-        handler = dispatch.get(method)
-        if handler is None:
-            return ProviderResult(
-                provider=self.name, method=method, error=f"Unknown method: {method}"
-            )
-        try:
-            return handler(params)
-        except Exception as exc:
-            logger.error("Helius %s failed: %s", method, exc, exc_info=True)
-            return ProviderResult(provider=self.name, method=method, error=str(exc))
+        })
 
     def _get_token_accounts(self, params: dict[str, Any]) -> ProviderResult:
         address = params.get("address", "")

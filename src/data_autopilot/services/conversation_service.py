@@ -211,8 +211,6 @@ class ConversationService:
             }
 
     def _connect_source_response(self, message: str, tenant_id: str) -> dict:
-        from data_autopilot.api.state import mode1_credential_flow
-
         try:
             text = message.lower()
             if "shopify" in text or "store" in text:

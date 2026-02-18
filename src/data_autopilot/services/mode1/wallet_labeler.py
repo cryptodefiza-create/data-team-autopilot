@@ -33,15 +33,11 @@ KNOWN_MARKET_MAKERS: dict[str, dict[str, str]] = {
 }
 
 
-def _build_all_known() -> dict[str, dict[str, str]]:
-    combined: dict[str, dict[str, str]] = {}
-    combined.update(KNOWN_EXCHANGE_WALLETS)
-    combined.update(KNOWN_PROTOCOL_WALLETS)
-    combined.update(KNOWN_MARKET_MAKERS)
-    return combined
-
-
-_ALL_KNOWN = _build_all_known()
+_ALL_KNOWN: dict[str, dict[str, str]] = {
+    **KNOWN_EXCHANGE_WALLETS,
+    **KNOWN_PROTOCOL_WALLETS,
+    **KNOWN_MARKET_MAKERS,
+}
 
 
 class WalletLabeler:

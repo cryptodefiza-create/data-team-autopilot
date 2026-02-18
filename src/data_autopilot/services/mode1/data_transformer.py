@@ -10,17 +10,17 @@ class DataTransformer:
         for key, value in filters.items():
             if key.endswith("_min"):
                 field = key[:-4]
+                threshold = float(value)
                 result = [
                     r for r in result
-                    if self._to_float(r.get(field)) is not None
-                    and self._to_float(r.get(field)) >= float(value)
+                    if (v := self._to_float(r.get(field))) is not None and v >= threshold
                 ]
             elif key.endswith("_max"):
                 field = key[:-4]
+                threshold = float(value)
                 result = [
                     r for r in result
-                    if self._to_float(r.get(field)) is not None
-                    and self._to_float(r.get(field)) <= float(value)
+                    if (v := self._to_float(r.get(field))) is not None and v <= threshold
                 ]
             else:
                 result = [r for r in result if str(r.get(key, "")).lower() == str(value).lower()]

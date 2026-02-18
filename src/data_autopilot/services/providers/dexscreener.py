@@ -26,21 +26,11 @@ class DexScreenerProvider(BaseProvider):
         self._mock_pools[address] = data
 
     def fetch(self, method: str, params: dict[str, Any]) -> ProviderResult:
-        dispatch = {
+        return self._dispatch_fetch(method, params, {
             "get_pair": self._get_pair,
             "get_price": self._get_price,
             "search_pairs": self._search_pairs,
-        }
-        handler = dispatch.get(method)
-        if handler is None:
-            return ProviderResult(
-                provider=self.name, method=method, error=f"Unknown method: {method}"
-            )
-        try:
-            return handler(params)
-        except Exception as exc:
-            logger.error("DexScreener %s failed: %s", method, exc, exc_info=True)
-            return ProviderResult(provider=self.name, method=method, error=str(exc))
+        })
 
     def _get_pair(self, params: dict[str, Any]) -> ProviderResult:
         chain = params.get("chain", "ethereum")

@@ -25,21 +25,10 @@ class SnapshotProvider(BaseProvider):
         self._mock_data[method] = data
 
     def fetch(self, method: str, params: dict[str, Any]) -> ProviderResult:
-        dispatch = {
+        return self._dispatch_fetch(method, params, {
             "get_proposals": self._get_proposals,
             "get_votes": self._get_votes,
-        }
-        handler = dispatch.get(method)
-        if handler is None:
-            return ProviderResult(
-                provider=self.name, method=method,
-                error=f"Unknown method: {method}",
-            )
-        try:
-            return handler(params)
-        except Exception as exc:
-            logger.error("Snapshot %s failed: %s", method, exc)
-            return ProviderResult(provider=self.name, method=method, error=str(exc))
+        })
 
     def _get_proposals(self, params: dict[str, Any]) -> ProviderResult:
         space = params.get("space", "")

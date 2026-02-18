@@ -28,6 +28,24 @@ class BaseProvider(abc.ABC):
     @abc.abstractmethod
     def fetch(self, method: str, params: dict[str, Any]) -> ProviderResult: ...
 
+    def _dispatch_fetch(
+        self,
+        method: str,
+        params: dict[str, Any],
+        handlers: dict[str, Any],
+    ) -> ProviderResult:
+        """Common dispatch logic: look up handler, call it, catch errors."""
+        handler = handlers.get(method)
+        if handler is None:
+            return ProviderResult(
+                provider=self.name, method=method, error=f"Unknown method: {method}"
+            )
+        try:
+            return handler(params)
+        except Exception as exc:
+            logger.error("%s %s failed: %s", self.name, method, exc, exc_info=True)
+            return ProviderResult(provider=self.name, method=method, error=str(exc))
+
     def _post_json_rpc(self, url: str, method: str, params: list | dict) -> dict:
         payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
         for attempt in range(_MAX_RETRIES + 1):
@@ -41,7 +59,7 @@ class BaseProvider(abc.ABC):
                 )
                 if attempt == _MAX_RETRIES:
                     raise
-        return {}  # unreachable
+        raise RuntimeError("unreachable")  # satisfies type checker
 
     def _get(self, url: str, params: dict[str, Any] | None = None) -> dict | list:
         for attempt in range(_MAX_RETRIES + 1):
@@ -55,7 +73,7 @@ class BaseProvider(abc.ABC):
                 )
                 if attempt == _MAX_RETRIES:
                     raise
-        return {}  # unreachable
+        raise RuntimeError("unreachable")  # satisfies type checker
 
     def close(self) -> None:
         self._client.close()

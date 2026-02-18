@@ -26,25 +26,11 @@ class BinanceProvider(BaseProvider):
         self._mock_data[method] = data
 
     def fetch(self, method: str, params: dict[str, Any]) -> ProviderResult:
-        dispatch = {
+        return self._dispatch_fetch(method, params, {
             "get_24h_ticker": self._get_24h_ticker,
             "get_order_book": self._get_order_book,
             "get_funding_rate": self._get_funding_rate,
-        }
-        handler = dispatch.get(method)
-        if handler is None:
-            return ProviderResult(
-                provider=self.name, method=method,
-                error=f"Unknown method: {method}",
-            )
-        try:
-            return handler(params)
-        except Exception as exc:
-            logger.error("Binance %s failed: %s", method, exc)
-            return ProviderResult(
-                provider=self.name, method=method,
-                error=str(exc),
-            )
+        })
 
     def _get_24h_ticker(self, params: dict[str, Any]) -> ProviderResult:
         symbol = params.get("symbol", "SOLUSDT")

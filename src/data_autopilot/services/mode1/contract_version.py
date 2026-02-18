@@ -93,7 +93,7 @@ class ContractVersionManager:
         v1_metrics = {m.name: m for m in contract_v1.metrics}
         v2_metrics = {m.name: m for m in contract_v2.metrics}
 
-        for name in set(list(v1_metrics.keys()) + list(v2_metrics.keys())):
+        for name in v1_metrics.keys() | v2_metrics.keys():
             m1 = v1_metrics.get(name)
             m2 = v2_metrics.get(name)
             if m1 and m2 and m1.definition != m2.definition:

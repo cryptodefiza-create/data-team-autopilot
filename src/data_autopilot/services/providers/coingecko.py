@@ -48,25 +48,11 @@ class CoinGeckoProvider(BaseProvider):
         super().__init__(api_key=api_key, base_url=base_url)
 
     def fetch(self, method: str, params: dict[str, Any]) -> ProviderResult:
-        dispatch = {
+        return self._dispatch_fetch(method, params, {
             "get_price": self._get_price,
             "get_coin_info": self._get_coin_info,
             "get_price_history": self._get_price_history,
-        }
-        handler = dispatch.get(method)
-        if handler is None:
-            return ProviderResult(
-                provider=self.name,
-                method=method,
-                error=f"Unknown method: {method}",
-            )
-        try:
-            return handler(params)
-        except Exception as exc:
-            logger.error("CoinGecko %s failed: %s", method, exc, exc_info=True)
-            return ProviderResult(
-                provider=self.name, method=method, error=str(exc)
-            )
+        })
 
     def _get_price(self, params: dict[str, Any]) -> ProviderResult:
         token = params.get("token", "")

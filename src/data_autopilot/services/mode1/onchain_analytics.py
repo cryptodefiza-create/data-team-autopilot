@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from unittest.mock import MagicMock
 
 from data_autopilot.services.mode1.models import (
     DailySnapshot,
@@ -28,7 +27,7 @@ class OnChainAnalytics:
         labeler: WalletLabeler | None = None,
         mock_mode: bool = False,
     ) -> None:
-        self._helius = helius or MagicMock()
+        self._helius = helius
         self._persistence = persistence
         self._labeler = labeler or WalletLabeler()
         self._mock_mode = mock_mode

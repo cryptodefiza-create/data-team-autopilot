@@ -61,8 +61,9 @@ class DeFiAnalytics:
         # Compute participation trend from recent closed proposals
         participation_trend = "stable"
         if len(closed) >= 4:
-            first_half_votes = sum(p.get("votes", 0) for p in closed[len(closed) // 2 :])
-            second_half_votes = sum(p.get("votes", 0) for p in closed[: len(closed) // 2])
+            mid = len(closed) // 2
+            first_half_votes = sum(p.get("votes", 0) for p in closed[:mid])
+            second_half_votes = sum(p.get("votes", 0) for p in closed[mid:])
             if second_half_votes > first_half_votes * 1.2:
                 participation_trend = "increasing"
             elif second_half_votes < first_half_votes * 0.8:

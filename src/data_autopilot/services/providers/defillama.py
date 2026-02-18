@@ -27,22 +27,12 @@ class DefiLlamaProvider(BaseProvider):
         self._mock_data[method] = data
 
     def fetch(self, method: str, params: dict[str, Any]) -> ProviderResult:
-        dispatch = {
+        return self._dispatch_fetch(method, params, {
             "get_tvl": self._get_tvl,
             "get_protocol": self._get_protocol,
             "get_chain_tvl": self._get_chain_tvl,
             "get_fees": self._get_fees,
-        }
-        handler = dispatch.get(method)
-        if handler is None:
-            return ProviderResult(
-                provider=self.name, method=method, error=f"Unknown method: {method}"
-            )
-        try:
-            return handler(params)
-        except Exception as exc:
-            logger.error("DefiLlama %s failed: %s", method, exc, exc_info=True)
-            return ProviderResult(provider=self.name, method=method, error=str(exc))
+        })
 
     def _get_tvl(self, params: dict[str, Any]) -> ProviderResult:
         protocol = params.get("protocol", params.get("token", ""))

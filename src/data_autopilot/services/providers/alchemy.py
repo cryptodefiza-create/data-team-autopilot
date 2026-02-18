@@ -17,21 +17,11 @@ class AlchemyProvider(BaseProvider):
         super().__init__(api_key=api_key, base_url=url)
 
     def fetch(self, method: str, params: dict[str, Any]) -> ProviderResult:
-        dispatch = {
+        return self._dispatch_fetch(method, params, {
             "get_token_balances": self._get_token_balances,
             "get_asset_transfers": self._get_asset_transfers,
             "get_logs": self._get_logs,
-        }
-        handler = dispatch.get(method)
-        if handler is None:
-            return ProviderResult(
-                provider=self.name, method=method, error=f"Unknown method: {method}"
-            )
-        try:
-            return handler(params)
-        except Exception as exc:
-            logger.error("Alchemy %s failed: %s", method, exc, exc_info=True)
-            return ProviderResult(provider=self.name, method=method, error=str(exc))
+        })
 
     def _get_token_balances(self, params: dict[str, Any]) -> ProviderResult:
         address = params.get("address", "")

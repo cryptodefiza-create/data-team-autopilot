@@ -100,11 +100,7 @@ class ErrorHandler:
 
     def validate_address(self, address: str) -> bool:
         """Check if an address looks valid (Solana or Ethereum)."""
-        if _ETH_PATTERN.match(address):
-            return True
-        if _BASE58_PATTERN.match(address):
-            return True
-        return False
+        return bool(_ETH_PATTERN.match(address) or _BASE58_PATTERN.match(address))
 
     @staticmethod
     def _suggest_alternatives(entity: str, params: dict[str, Any] | None) -> list[str]:
