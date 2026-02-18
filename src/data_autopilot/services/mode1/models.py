@@ -266,3 +266,106 @@ class SQLQuery(BaseModel):
     validated: bool = False
     estimated_cost: float | None = None
     error: str | None = None
+
+
+# ---------- Phase 6: Semantic Contracts + Transformations ----------
+
+
+class EntityConfig(BaseModel):
+    name: str = ""
+    grain: str = ""  # e.g. "one row per order"
+    source_table: str = ""  # e.g. "staging.stg_orders"
+    primary_key: str = "id"
+    key_type: str = "text"
+    dedup_strategy: str = "latest by updated_at"
+    exclusions: list[str] = Field(default_factory=list)
+    columns: list[ColumnProfile] = Field(default_factory=list)
+
+
+class MetricDefinition(BaseModel):
+    name: str = ""
+    definition: str = ""  # SQL expression e.g. "SUM(order_amount) - SUM(refund_amount)"
+    includes_tax: bool = False
+    includes_refunds: bool = True
+
+
+class JoinDefinition(BaseModel):
+    left: str = ""
+    right: str = ""
+    on: str = ""  # e.g. "order.customer_id = customer.id"
+    type: str = "inner"
+    expected_cardinality: str = "1:1"
+    fan_out_risk: bool = False
+
+
+class ContractDefaults(BaseModel):
+    timezone: str = "UTC"
+    currency: str = "USD"
+    week_start: str = "Monday"
+
+
+class SemanticContract(BaseModel):
+    org_id: str = ""
+    version: int = 1
+    effective_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    entities: list[EntityConfig] = Field(default_factory=list)
+    metrics: list[MetricDefinition] = Field(default_factory=list)
+    joins: list[JoinDefinition] = Field(default_factory=list)
+    defaults: ContractDefaults = Field(default_factory=ContractDefaults)
+
+    def get_entity(self, name: str) -> EntityConfig | None:
+        for e in self.entities:
+            if e.name == name:
+                return e
+        return None
+
+    def get_metric(self, name: str) -> MetricDefinition | None:
+        for m in self.metrics:
+            if m.name == name:
+                return m
+        return None
+
+    def get_joins_for(self, entity: str) -> list[JoinDefinition]:
+        return [j for j in self.joins if j.left == entity or j.right == entity]
+
+
+class ValidationCheck(BaseModel):
+    name: str = ""
+    passed: bool = True
+    message: str = ""
+
+
+class ValidationResult(BaseModel):
+    passed: bool = True
+    checks: list[ValidationCheck] = Field(default_factory=list)
+
+    @property
+    def failures(self) -> list[ValidationCheck]:
+        return [c for c in self.checks if not c.passed]
+
+
+class StagingTable(BaseModel):
+    name: str = ""  # e.g. "stg_orders"
+    entity: str = ""
+    row_count: int = 0
+    columns: list[str] = Field(default_factory=list)
+    records: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class MartTable(BaseModel):
+    name: str = ""  # e.g. "mart_revenue"
+    source_entities: list[str] = Field(default_factory=list)
+    row_count: int = 0
+    columns: list[str] = Field(default_factory=list)
+    records: list[dict[str, Any]] = Field(default_factory=list)
+    version: int = 1
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class DAGNode(BaseModel):
+    name: str = ""
+    layer: str = ""  # "raw" | "staging" | "marts"
+    depends_on: list[str] = Field(default_factory=list)
+    status: str = "pending"  # "pending" | "running" | "completed" | "failed"
+    error: str | None = None
