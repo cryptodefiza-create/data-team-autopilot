@@ -75,6 +75,60 @@ def _build_mode1_fetcher():
 mode1_fetcher = _build_mode1_fetcher()
 
 
+def _build_mode1_persistence():
+    from data_autopilot.config.settings import get_settings
+    from data_autopilot.services.mode1.persistence import PersistenceManager
+
+    s = get_settings()
+    return PersistenceManager(mock_mode=s.neon_mock_mode)
+
+
+def _build_snapshot_pipeline():
+    from data_autopilot.services.mode1.snapshot_pipeline import SnapshotPipeline
+
+    return SnapshotPipeline(
+        persistence=mode1_persistence,
+        fetcher=mode1_fetcher,
+    )
+
+
+mode1_persistence = _build_mode1_persistence()
+mode1_snapshot_pipeline = _build_snapshot_pipeline()
+
+
+def _build_credential_vault():
+    from data_autopilot.config.settings import get_settings
+    from data_autopilot.services.mode1.credential_vault import CredentialVault
+
+    s = get_settings()
+    return CredentialVault(mock_mode=s.credential_vault_mock_mode)
+
+
+def _build_credential_flow():
+    from data_autopilot.services.mode1.credential_flow import CredentialFlow
+    from data_autopilot.services.mode1.thin_contract import ThinContractManager
+
+    return CredentialFlow(
+        vault=mode1_credential_vault,
+        contract_manager=ThinContractManager(),
+    )
+
+
+def _build_business_query():
+    from data_autopilot.services.mode1.business_query import BusinessQueryEngine
+    from data_autopilot.services.mode1.thin_contract import ThinContractManager
+
+    return BusinessQueryEngine(
+        vault=mode1_credential_vault,
+        contract_manager=ThinContractManager(),
+    )
+
+
+mode1_credential_vault = _build_credential_vault()
+mode1_credential_flow = _build_credential_flow()
+mode1_business_query = _build_business_query()
+
+
 def auto_alert_from_workflow_result(db: Session, org_id: str, workflow_type: str, result: dict) -> None:
     if result.get("workflow_status") != "partial_failure":
         return

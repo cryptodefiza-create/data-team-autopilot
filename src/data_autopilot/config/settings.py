@@ -80,6 +80,16 @@ class Settings(BaseSettings):
     alchemy_api_key: str = Field(default="")
     blockchain_provider_tier: str = Field(default="free")
 
+    # Neon persistence (Mode 1 tracking)
+    neon_mock_mode: bool = Field(default=True)
+    neon_api_key: str = Field(default="")
+    neon_project_id: str = Field(default="")
+
+    # Connected sources (Phase 4)
+    credential_vault_mock_mode: bool = Field(default=True)
+    airbyte_mock_mode: bool = Field(default=True)
+    airbyte_api_key: str = Field(default="")
+
     @model_validator(mode="after")
     def validate_runtime_modes(self) -> "Settings":
         # Hard safety gate: never allow real execution while connector is in mock mode.

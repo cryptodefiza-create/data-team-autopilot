@@ -13,6 +13,7 @@ class Intent(str, Enum):
     LOOKUP = "lookup"
     FOLLOW_UP = "follow_up"
     EXPORT = "export"
+    TRACK = "track"
 
 
 class Chain(str, Enum):
@@ -125,3 +126,143 @@ class RawDataset(BaseModel):
     records: list[dict[str, Any]] = Field(default_factory=list)
     source: str = "file_upload"
     record_count: int = 0
+
+
+class StorageConfig(BaseModel):
+    type: str = "mock"  # "mock" | "neon_postgres"
+    project_id: str = ""
+    connection_uri: str = ""
+    schemas: list[str] = Field(default_factory=lambda: ["raw", "staging", "marts", "analytics"])
+
+
+class PipelineStatus(str, Enum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+    FAILED = "failed"
+    STALE = "stale"
+
+
+class Pipeline(BaseModel):
+    id: str = ""
+    org_id: str = ""
+    entity: str = ""
+    chain: str = ""
+    token: str = ""
+    address: str = ""
+    query_params: dict[str, Any] = Field(default_factory=dict)
+    schedule: str = "daily"
+    status: PipelineStatus = PipelineStatus.ACTIVE
+    last_run: datetime | None = None
+    last_success: datetime | None = None
+    last_error: str | None = None
+    run_count: int = 0
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class SnapshotRecord(BaseModel):
+    id: int = 0
+    ingested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    source: str = ""
+    entity: str = ""
+    query_params: dict[str, Any] = Field(default_factory=dict)
+    record_id: str = ""
+    payload_hash: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class PipelineHealth(BaseModel):
+    pipeline_id: str = ""
+    source: str = ""
+    entity: str = ""
+    schedule: str = ""
+    last_run: datetime | None = None
+    last_success: datetime | None = None
+    status: PipelineStatus = PipelineStatus.ACTIVE
+    error: str | None = None
+    hours_since_sync: float | None = None
+    alert: str | None = None
+
+
+# ---------- Phase 4: Connected Sources ----------
+
+
+class CredentialRecord(BaseModel):
+    id: str = ""
+    org_id: str = ""
+    source: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    validated: bool = False
+
+
+class ThinContract(BaseModel):
+    revenue_definition: str = "gross"  # "gross" | "net_after_refunds" | "net_after_refunds_and_tax"
+    timezone: str = "UTC"
+    exclude_test_orders: bool = True
+    currency: str = "USD"
+
+
+class SyncStatus(BaseModel):
+    connection_id: str = ""
+    status: str = "pending"  # "pending" | "running" | "completed" | "failed"
+    rows_synced: int = 0
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error: str | None = None
+
+
+class ConnectedSource(BaseModel):
+    org_id: str = ""
+    source: str = ""  # "shopify" | "stripe"
+    shop_domain: str = ""
+    credential_id: str = ""
+    contract: ThinContract = Field(default_factory=ThinContract)
+    connected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    stats: dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------- Phase 5: Warehouse Connection ----------
+
+
+class ColumnProfile(BaseModel):
+    name: str = ""
+    data_type: str = ""
+    nullable: bool = True
+    is_primary_key: bool = False
+
+
+class TableProfile(BaseModel):
+    name: str = ""
+    columns: list[ColumnProfile] = Field(default_factory=list)
+    row_count: int = 0
+    sample: list[dict[str, Any]] = Field(default_factory=list)
+    detected_keys: list[str] = Field(default_factory=list)
+    detected_time_columns: list[str] = Field(default_factory=list)
+    detected_relationships: list[dict[str, str]] = Field(default_factory=list)
+
+
+class SchemaProfile(BaseModel):
+    tables: list[TableProfile] = Field(default_factory=list)
+
+    @property
+    def table_names(self) -> list[str]:
+        return [t.name for t in self.tables]
+
+    def to_llm_format(self) -> str:
+        lines = []
+        for t in self.tables:
+            cols = ", ".join(f"{c.name} ({c.data_type})" for c in t.columns)
+            lines.append(f"- {t.name} ({t.row_count:,} rows): {cols}")
+        return "\n".join(lines)
+
+
+class EntityAlias(BaseModel):
+    table_name: str = ""
+    alias: str = ""
+    org_id: str = ""
+
+
+class SQLQuery(BaseModel):
+    sql: str = ""
+    validated: bool = False
+    estimated_cost: float | None = None
+    error: str | None = None

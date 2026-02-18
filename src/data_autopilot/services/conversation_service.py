@@ -32,12 +32,29 @@ class ConversationService:
             return "profile"
         if any(token in text for token in {"memo", "weekly", "summary", "report"}):
             return "memo"
+        if any(token in text for token in {"track", "monitor", "recurring", "schedule"}):
+            if any(token in text for token in {
+                "token", "holders", "solana", "ethereum", "wallet", "nft",
+                "blockchain", "on-chain", "$", "mint", "defi",
+                "tvl", "dex", "pair", "protocol", "liquidity",
+            }):
+                return "track_blockchain"
         if any(token in text for token in {
             "token", "holders", "solana", "ethereum", "wallet", "nft",
             "blockchain", "on-chain", "$", "mint", "defi",
             "tvl", "dex", "pair", "protocol", "liquidity",
         }):
             return "blockchain"
+        if any(token in text for token in {"connect", "link", "integrate"}):
+            if any(token in text for token in {"shopify", "stripe", "store", "payment"}):
+                return "connect_source"
+        if any(token in text for token in {
+            "order", "orders", "revenue", "sales", "aov",
+            "subscription", "subscriptions", "invoice", "invoices",
+            "charge", "charges", "mrr", "churn",
+        }):
+            if any(token in text for token in {"my", "our", "store", "shop", "account"}):
+                return "business_query"
         return "query"
 
     def _interpret(self, db: Session, tenant_id: str, message: str) -> dict:
@@ -47,7 +64,7 @@ class ConversationService:
             system_prompt = (
                 "You route user requests for a data agent. "
                 "Return JSON with keys action, sql, reason. "
-                "action must be one of: query, profile, dashboard, memo, blockchain. "
+                "action must be one of: query, profile, dashboard, memo, blockchain, track_blockchain, connect_source, business_query. "
                 "Only provide sql when action=query."
             )
             user_prompt = f"Request: {message}"
@@ -60,7 +77,7 @@ class ConversationService:
                     raise RuntimeError(result.error)
                 parsed = result.content
                 candidate = str(parsed.get("action", "")).strip().lower()
-                if candidate in {"query", "profile", "dashboard", "memo", "blockchain"}:
+                if candidate in {"query", "profile", "dashboard", "memo", "blockchain", "track_blockchain", "connect_source", "business_query"}:
                     action = candidate
                 sql_val = parsed.get("sql", "")
                 if isinstance(sql_val, str):
@@ -135,6 +152,126 @@ class ConversationService:
             "warnings": [],
         }
 
+    @staticmethod
+    def _extract_schedule(message: str) -> str:
+        text = message.lower()
+        if "hourly" in text:
+            return "hourly"
+        if "weekly" in text:
+            return "weekly"
+        return "daily"
+
+    def _track_blockchain_response(self, message: str, tenant_id: str) -> dict:
+        from data_autopilot.api.state import mode1_fetcher, mode1_persistence, mode1_snapshot_pipeline
+        from data_autopilot.services.mode1.persistence import TierLimitError
+
+        try:
+            # Parse the request
+            request = mode1_fetcher._parser.parse(message)
+            schedule = self._extract_schedule(message)
+            tier = mode1_fetcher._tier
+
+            # Ensure storage is provisioned (checks tier)
+            mode1_persistence.ensure_storage(tenant_id, tier=tier)
+
+            # Create pipeline
+            pipeline = mode1_snapshot_pipeline.create(
+                org_id=tenant_id, request=request, schedule=schedule
+            )
+
+            return {
+                "response_type": "pipeline_created",
+                "summary": (
+                    f"Now tracking {request.entity.value} ({request.token or request.chain.value}) "
+                    f"{schedule}. First snapshot collected."
+                ),
+                "data": {
+                    "pipeline_id": pipeline.id,
+                    "entity": pipeline.entity,
+                    "schedule": pipeline.schedule,
+                    "status": pipeline.status.value,
+                    "run_count": pipeline.run_count,
+                },
+                "warnings": [],
+            }
+        except TierLimitError as exc:
+            return {
+                "response_type": "tier_blocked",
+                "summary": str(exc),
+                "data": {},
+                "warnings": ["tier_limit"],
+            }
+        except Exception as exc:
+            logger.error("Track blockchain failed: %s", exc, exc_info=True)
+            return {
+                "response_type": "error",
+                "summary": f"Failed to set up tracking: {exc}",
+                "data": {},
+                "warnings": ["tracking_error"],
+            }
+
+    def _connect_source_response(self, message: str, tenant_id: str) -> dict:
+        from data_autopilot.api.state import mode1_credential_flow
+
+        try:
+            text = message.lower()
+            if "shopify" in text or "store" in text:
+                return {
+                    "response_type": "connect_prompt",
+                    "summary": (
+                        "I'll help you connect Shopify. I need two things:\n\n"
+                        "1. Your store domain (e.g., my-store.myshopify.com)\n"
+                        "2. An Admin API access token\n\n"
+                        "To get the token:\n"
+                        "Shopify Admin → Settings → Apps → Develop Apps\n"
+                        "→ Create an app → Configure Admin API scopes\n"
+                        "→ Enable: read_orders, read_products, read_customers\n"
+                        "→ Install app → Copy the Admin API access token"
+                    ),
+                    "data": {"source": "shopify", "step": "awaiting_credentials"},
+                    "warnings": [],
+                }
+            elif "stripe" in text or "payment" in text:
+                return {
+                    "response_type": "connect_prompt",
+                    "summary": (
+                        "I'll help you connect Stripe. I need your Stripe API key.\n\n"
+                        "To get it:\n"
+                        "Stripe Dashboard → Developers → API keys\n"
+                        "→ Copy your Secret key (starts with sk_live_ or sk_test_)"
+                    ),
+                    "data": {"source": "stripe", "step": "awaiting_credentials"},
+                    "warnings": [],
+                }
+            return {
+                "response_type": "info",
+                "summary": "I can connect Shopify or Stripe. Which would you like to set up?",
+                "data": {},
+                "warnings": [],
+            }
+        except Exception as exc:
+            logger.error("Connect source failed: %s", exc, exc_info=True)
+            return {
+                "response_type": "error",
+                "summary": f"Failed to start connection flow: {exc}",
+                "data": {},
+                "warnings": ["connect_error"],
+            }
+
+    def _business_query_response(self, message: str, tenant_id: str) -> dict:
+        from data_autopilot.api.state import mode1_business_query
+
+        try:
+            return mode1_business_query.query(tenant_id, message)
+        except Exception as exc:
+            logger.error("Business query failed: %s", exc, exc_info=True)
+            return {
+                "response_type": "error",
+                "summary": f"Business data query failed: {exc}",
+                "data": {},
+                "warnings": ["business_query_error"],
+            }
+
     def _blockchain_response(self, message: str, session_id: str = "default") -> dict:
         from data_autopilot.api.state import mode1_fetcher
 
@@ -153,7 +290,13 @@ class ConversationService:
         interpreted = self._interpret(db, tenant_id, message)
         action = interpreted["action"]
         result: dict
-        if action == "blockchain":
+        if action == "connect_source":
+            result = self._connect_source_response(message, tenant_id=tenant_id)
+        elif action == "business_query":
+            result = self._business_query_response(message, tenant_id=tenant_id)
+        elif action == "track_blockchain":
+            result = self._track_blockchain_response(message, tenant_id=tenant_id)
+        elif action == "blockchain":
             result = self._blockchain_response(message)
         elif action == "query":
             result = self._query_response(
