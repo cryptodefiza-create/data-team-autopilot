@@ -3,7 +3,7 @@ import hashlib
 
 from sqlalchemy.orm import Session
 
-from data_autopilot.agents.composer import Composer
+from data_autopilot.agents.composer import compose
 from data_autopilot.agents.critic import Critic
 from data_autopilot.agents.executor import Executor
 from data_autopilot.agents.contracts import StepResult
@@ -25,7 +25,6 @@ class AgentService:
         self.critic = Critic(SqlSafetyEngine(), SlidingWindowCostLimiter())
         self.executor = Executor(MockQueryExecutor())
         self.query_service = QueryService()
-        self.composer = Composer()
         self.audit = AuditService()
 
     @staticmethod
@@ -156,4 +155,4 @@ class AgentService:
         if results:
             warnings = self.critic.post_execute(results[0].output)
 
-        return self.composer.compose(results, warnings)
+        return compose(results, warnings)

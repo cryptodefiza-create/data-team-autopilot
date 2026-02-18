@@ -49,14 +49,12 @@ class SQLValidator:
 
     def _check_statement_type(self, sql: str) -> None:
         """Ensure the SQL is a SELECT statement only."""
-        # Get the first keyword
         first_word = sql.split()[0].lower() if sql.split() else ""
         if first_word != "select" and first_word != "with":
             raise UnsafeSQLError(
                 f"Only SELECT queries are allowed. Got: {first_word.upper()}"
             )
 
-        # Check for embedded DML/DDL anywhere in the query
         sql_lower = sql.lower()
         for forbidden in _FORBIDDEN_STATEMENTS:
             # Match as whole word to avoid false positives like "created_at"

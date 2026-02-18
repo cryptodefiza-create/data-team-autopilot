@@ -53,6 +53,6 @@ class Critic:
     def post_execute(self, output: dict) -> list[str]:
         warnings: list[str] = []
         rows = output.get("rows", [])
-        if isinstance(rows, list) and len(rows) == 0:
+        if not rows:
             warnings.append("No data returned")
         return warnings

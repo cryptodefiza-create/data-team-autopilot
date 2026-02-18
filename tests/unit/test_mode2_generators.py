@@ -8,7 +8,7 @@ import openpyxl
 from data_autopilot.services.mode1.csv_generator import CSVGenerator
 from data_autopilot.services.mode1.interpretation import (
     InterpretationEngine,
-    PromptSanitizer,
+    sanitize_prompt,
 )
 from data_autopilot.services.mode1.models import (
     DataRequest,
@@ -111,14 +111,13 @@ def test_interpretation_holders() -> None:
 
 
 def test_sanitizer_removes_api_keys() -> None:
-    """2.5: PromptSanitizer removes API key patterns from LLM prompt."""
-    sanitizer = PromptSanitizer()
+    """2.5: sanitize_prompt removes API key patterns from LLM prompt."""
     text = (
         "Query with key sk_live_abc123def456ghi789 "
         "and shopify token shpat_xyz123 "
         "and hex key aabbccddee112233445566778899aabbccddeeff0011223344556677889900aa"
     )
-    cleaned = sanitizer.sanitize(text)
+    cleaned = sanitize_prompt(text)
     assert "sk_live_" not in cleaned
     assert "shpat_" not in cleaned
     assert "aabbccddee" not in cleaned

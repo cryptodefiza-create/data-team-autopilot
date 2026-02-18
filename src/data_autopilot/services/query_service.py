@@ -78,7 +78,13 @@ class QueryService:
             return {"status": "not_found"}
 
         if row.status == "executed":
-            return self._executed_response(row)
+            return {
+                "status": "executed",
+                "preview_id": row.id,
+                "estimated_bytes": row.estimated_bytes,
+                "actual_bytes": row.actual_bytes,
+                "rows": row.output.get("rows", []),
+            }
 
         if row.requires_approval and row.status != "approved":
             row.status = "approved"
@@ -100,10 +106,6 @@ class QueryService:
         db.add(row)
         db.commit()
         db.refresh(row)
-        return self._executed_response(row)
-
-    @staticmethod
-    def _executed_response(row: QueryApproval) -> dict:
         return {
             "status": "executed",
             "preview_id": row.id,

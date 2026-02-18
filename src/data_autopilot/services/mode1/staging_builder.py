@@ -37,12 +37,10 @@ class StagingBuilder:
         if backend is None:
             raise ValueError(f"No storage provisioned for org {org_id}")
 
-        # Get all raw snapshots for this entity
         snapshots = backend.query_snapshots(entity)
         if not snapshots:
             return StagingTable(name=f"stg_{entity}", entity=entity, row_count=0)
 
-        # Flatten JSONB payloads into typed records
         records = []
         seen_keys: set[str] = set()
 
@@ -67,7 +65,6 @@ class StagingBuilder:
 
             records.append(record)
 
-        # Detect columns from records
         columns = list(records[0].keys()) if records else []
 
         staging = StagingTable(
@@ -98,17 +95,14 @@ class StagingBuilder:
 
         record: dict[str, Any] = {}
 
-        # Extract primary key
         pk = payload.get(config.primary_key)
         if pk is not None:
             record[config.primary_key] = pk
 
-        # Extract all other fields
         for key, value in payload.items():
             if key not in record:
                 record[key] = value
 
-        # Add metadata
         record["_ingested_at"] = snapshot.ingested_at.isoformat()
         record["_source"] = snapshot.source
 

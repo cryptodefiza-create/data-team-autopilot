@@ -17,19 +17,16 @@ _REDACT_PATTERNS = [
 ]
 
 
-class PromptSanitizer:
+def sanitize_prompt(text: str) -> str:
     """Ensures no sensitive data leaks into LLM prompts."""
-
-    def sanitize(self, text: str) -> str:
-        for pattern in _REDACT_PATTERNS:
-            text = pattern.sub("[REDACTED]", text)
-        return text
+    for pattern in _REDACT_PATTERNS:
+        text = pattern.sub("[REDACTED]", text)
+    return text
 
 
 class InterpretationEngine:
     def __init__(self, llm: LLMClient | None = None) -> None:
         self._llm = llm
-        self._sanitizer = PromptSanitizer()
 
     def interpret(
         self,
@@ -53,7 +50,7 @@ class InterpretationEngine:
     def _llm_interpret(
         self, stats: dict[str, Any], request: DataRequest
     ) -> Interpretation:
-        stats_str = self._sanitizer.sanitize(str(stats))
+        stats_str = sanitize_prompt(str(stats))
         system_prompt = (
             "You are a blockchain data analyst. Provide 2-3 brief observations "
             "about the data. Rules:\n"
@@ -64,7 +61,7 @@ class InterpretationEngine:
             "- Keep it under 100 words"
         )
         user_prompt = (
-            f'The user asked: "{self._sanitizer.sanitize(request.raw_message)}"\n\n'
+            f'The user asked: "{sanitize_prompt(request.raw_message)}"\n\n'
             f"Summary statistics:\n{stats_str}"
         )
         result = self._llm.generate_json(

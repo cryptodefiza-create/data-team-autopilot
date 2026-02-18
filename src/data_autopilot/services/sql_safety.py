@@ -138,8 +138,6 @@ class SqlSafetyEngine:
         return SqlSafetyDecision(allowed=True, rewritten_sql=stripped)
 
     def _max_subquery_depth(self, root) -> int:
-        if exp is None:
-            return 0
         def walk(node, depth: int) -> int:
             max_depth = depth
             for child in node.iter_expressions():
@@ -152,8 +150,6 @@ class SqlSafetyEngine:
         return walk(root, 0)
 
     def _table_names(self, root) -> list[str]:
-        if exp is None:
-            return []
         names: list[str] = []
         for node in root.walk():
             if isinstance(node, exp.Table):
@@ -161,8 +157,6 @@ class SqlSafetyEngine:
         return names
 
     def _has_time_filter(self, select_stmt, column_name: str) -> bool:
-        if exp is None:
-            return False
         where_expr = select_stmt.args.get("where")
         if where_expr is None:
             return False
