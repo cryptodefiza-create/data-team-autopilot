@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 import hashlib
 import json
@@ -9,6 +10,8 @@ from typing import Any
 
 from data_autopilot.config.settings import get_settings
 from data_autopilot.services.cache_service import CacheService
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -240,3 +243,121 @@ class BigQueryConnector:
         rows = [dict(r.items()) for r in job.result(timeout=timeout_seconds)]
         processed = int(getattr(job, "total_bytes_processed", 0) or 0)
         return {"rows": rows, "actual_bytes": processed}
+
+    # ── Autopilot ingestion methods ──────────────────────────────────
+
+    def ensure_dataset(self, dataset_id: str = "autopilot") -> dict[str, Any]:
+        if self.settings.bigquery_mock_mode:
+            return {"dataset_id": dataset_id, "mode": "mock", "created": True}
+
+        try:
+            from google.cloud import bigquery  # type: ignore
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError("BigQuery live mode requires google-cloud-bigquery") from exc
+
+        client = self._build_client()
+        dataset_ref = f"{self.settings.bigquery_project_id}.{dataset_id}"
+        dataset = bigquery.Dataset(dataset_ref)
+        dataset.location = self.settings.bigquery_location
+        dataset = client.create_dataset(dataset, exists_ok=True)
+        return {"dataset_id": dataset_id, "mode": "live", "created": True}
+
+    @staticmethod
+    def _infer_schema(records: list[dict[str, Any]]) -> list[dict[str, str]]:
+        type_map: dict[str, set[str]] = {}
+        for row in records:
+            for key, val in row.items():
+                if val is None:
+                    continue
+                if isinstance(val, bool):
+                    py_type = "bool"
+                elif isinstance(val, int):
+                    py_type = "int"
+                elif isinstance(val, float):
+                    py_type = "float"
+                elif isinstance(val, (dict, list)):
+                    py_type = "complex"
+                else:
+                    py_type = "str"
+                type_map.setdefault(key, set()).add(py_type)
+
+        bq_type_priority = {"str": "STRING", "complex": "STRING", "float": "FLOAT", "int": "INTEGER", "bool": "BOOLEAN"}
+
+        schema: list[dict[str, str]] = []
+        for col, types in type_map.items():
+            if "str" in types or "complex" in types:
+                bq_type = "STRING"
+            elif "float" in types:
+                bq_type = "FLOAT"
+            elif "int" in types:
+                bq_type = "INTEGER"
+            elif "bool" in types:
+                bq_type = "BOOLEAN"
+            else:
+                bq_type = "STRING"
+            schema.append({"name": col, "type": bq_type})
+        return schema
+
+    @staticmethod
+    def _serialize_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        serialized = []
+        for row in records:
+            new_row: dict[str, Any] = {}
+            for key, val in row.items():
+                if isinstance(val, (dict, list)):
+                    new_row[key] = json.dumps(val)
+                else:
+                    new_row[key] = val
+            serialized.append(new_row)
+        return serialized
+
+    def create_table_from_records(
+        self,
+        records: list[dict[str, Any]],
+        table_name: str,
+        dataset_id: str = "autopilot",
+    ) -> dict[str, Any]:
+        if not records:
+            return {"table": f"{dataset_id}.{table_name}", "rows_inserted": 0, "mode": "mock" if self.settings.bigquery_mock_mode else "live"}
+
+        inferred = self._infer_schema(records)
+        serialized = self._serialize_records(records)
+
+        if self.settings.bigquery_mock_mode:
+            logger.info("Mock: would create table %s.%s with %d rows", dataset_id, table_name, len(serialized))
+            return {
+                "table": f"{dataset_id}.{table_name}",
+                "columns": inferred,
+                "rows_inserted": len(serialized),
+                "mode": "mock",
+            }
+
+        try:
+            from google.cloud import bigquery  # type: ignore
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError("BigQuery live mode requires google-cloud-bigquery") from exc
+
+        self.ensure_dataset(dataset_id)
+        client = self._build_client()
+
+        bq_schema = [
+            bigquery.SchemaField(col["name"], col["type"], mode="NULLABLE")
+            for col in inferred
+        ]
+
+        table_ref = f"{self.settings.bigquery_project_id}.{dataset_id}.{table_name}"
+        table = bigquery.Table(table_ref, schema=bq_schema)
+        table = client.create_table(table, exists_ok=True)
+
+        errors = client.insert_rows_json(table_ref, serialized)
+        if errors:
+            logger.error("BigQuery insert errors: %s", errors)
+            raise RuntimeError(f"BigQuery insert failed: {errors}")
+
+        return {
+            "table": f"{dataset_id}.{table_name}",
+            "table_fq": table_ref,
+            "columns": inferred,
+            "rows_inserted": len(serialized),
+            "mode": "live",
+        }

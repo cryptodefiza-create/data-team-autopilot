@@ -27,6 +27,13 @@ class ConversationService:
     def _fallback_action(message: str) -> str:
         text = message.lower()
         if any(token in text for token in {"dashboard", "chart", "visual", "kpi board"}):
+            # Check if this is an autopilot request (blockchain/web3 + dashboard)
+            if any(token in text for token in {
+                "token", "holders", "solana", "ethereum", "wallet", "nft",
+                "blockchain", "on-chain", "$", "mint", "defi",
+                "tvl", "dex", "pair", "protocol", "liquidity",
+            }):
+                return "autopilot"
             return "dashboard"
         if any(token in text for token in {"profile", "catalog", "schema", "introspect"}):
             return "profile"
@@ -64,7 +71,9 @@ class ConversationService:
             system_prompt = (
                 "You route user requests for a data agent. "
                 "Return JSON with keys action, sql, reason. "
-                "action must be one of: query, profile, dashboard, memo, blockchain, track_blockchain, connect_source, business_query. "
+                "action must be one of: query, profile, dashboard, memo, blockchain, track_blockchain, connect_source, business_query, autopilot. "
+                "Use autopilot ONLY when the user explicitly asks for a dashboard, chart, or visualization of blockchain/web3 data (e.g. 'build me a dashboard of BONK holders'). "
+                "If the user just asks to see or fetch blockchain data without mentioning dashboard/chart/visual, use blockchain instead. "
                 "Only provide sql when action=query."
             )
             user_prompt = f"Request: {message}"
@@ -77,7 +86,7 @@ class ConversationService:
                     raise RuntimeError(result.error)
                 parsed = result.content
                 candidate = str(parsed.get("action", "")).strip().lower()
-                if candidate in {"query", "profile", "dashboard", "memo", "blockchain", "track_blockchain", "connect_source", "business_query"}:
+                if candidate in {"query", "profile", "dashboard", "memo", "blockchain", "track_blockchain", "connect_source", "business_query", "autopilot"}:
                     action = candidate
                 sql_val = parsed.get("sql", "")
                 if isinstance(sql_val, str):
@@ -270,6 +279,73 @@ class ConversationService:
                 "warnings": ["business_query_error"],
             }
 
+    def _autopilot_response(self, message: str, tenant_id: str) -> dict:
+        from data_autopilot.api.state import mode1_fetcher, autopilot_pipeline
+
+        try:
+            # Step 1: Fetch live data
+            fetch_result = mode1_fetcher.handle(message, session_id=f"autopilot_{tenant_id}")
+            records = fetch_result.get("records", [])
+            if not records:
+                records = fetch_result.get("data", {}).get("records", [])
+            if not records:
+                return {
+                    "response_type": "error",
+                    "summary": "No data was returned from the data providers for this request.",
+                    "data": fetch_result,
+                    "warnings": ["no_records_fetched"],
+                }
+
+            # Extract entity/token metadata from fetch result
+            entity = fetch_result.get("entity", fetch_result.get("data", {}).get("entity", "data"))
+            token = fetch_result.get("token", fetch_result.get("data", {}).get("token", ""))
+
+            # Step 2: Run autopilot pipeline (BQ ingest → design → Metabase)
+            pipeline_result = autopilot_pipeline.run(
+                prompt=message,
+                records=records,
+                entity=entity,
+                token=token,
+                tenant_id=tenant_id,
+            )
+
+            if not pipeline_result.success:
+                return {
+                    "response_type": "error",
+                    "summary": f"Autopilot pipeline failed at step '{pipeline_result.error_step}': {pipeline_result.error}",
+                    "data": {
+                        "steps_completed": pipeline_result.steps_completed,
+                        "table_info": pipeline_result.table_info,
+                        "error_step": pipeline_result.error_step,
+                    },
+                    "warnings": ["autopilot_partial_failure"],
+                }
+
+            return {
+                "response_type": "autopilot_dashboard",
+                "summary": (
+                    f"Dashboard created with {len(pipeline_result.card_ids or [])} cards. "
+                    f"View it at: {pipeline_result.dashboard_url}"
+                ),
+                "data": {
+                    "dashboard_id": pipeline_result.dashboard_id,
+                    "dashboard_url": pipeline_result.dashboard_url,
+                    "table_info": pipeline_result.table_info,
+                    "cards_created": len(pipeline_result.card_ids or []),
+                    "steps_completed": pipeline_result.steps_completed,
+                    "records_ingested": len(records),
+                },
+                "warnings": [],
+            }
+        except Exception as exc:
+            logger.error("Autopilot failed: %s", exc, exc_info=True)
+            return {
+                "response_type": "error",
+                "summary": f"Autopilot pipeline failed: {exc}",
+                "data": {},
+                "warnings": ["autopilot_error"],
+            }
+
     def _blockchain_response(self, message: str, session_id: str = "default") -> dict:
         from data_autopilot.api.state import mode1_fetcher
 
@@ -288,7 +364,9 @@ class ConversationService:
         interpreted = self._interpret(db, tenant_id, message)
         action = interpreted["action"]
         result: dict
-        if action == "connect_source":
+        if action == "autopilot":
+            result = self._autopilot_response(message, tenant_id=tenant_id)
+        elif action == "connect_source":
             result = self._connect_source_response(message, tenant_id=tenant_id)
         elif action == "business_query":
             result = self._business_query_response(message, tenant_id=tenant_id)

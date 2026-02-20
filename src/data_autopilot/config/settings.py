@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     metabase_mock_mode: bool = Field(default=True)
     metabase_url: str = Field(default="http://localhost:3000")
     metabase_api_key: str = Field(default="")
+    metabase_bigquery_database_id: int = Field(default=1)
 
     # BigQuery
     bigquery_mock_mode: bool = Field(default=True)

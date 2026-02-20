@@ -129,6 +129,18 @@ mode1_credential_flow = _build_credential_flow()
 mode1_business_query = _build_business_query()
 
 
+def _build_autopilot_pipeline():
+    from data_autopilot.services.autopilot_pipeline import AutopilotPipeline
+
+    return AutopilotPipeline(
+        bq=bigquery_connector,
+        metabase=metabase_client,
+    )
+
+
+autopilot_pipeline = _build_autopilot_pipeline()
+
+
 def auto_alert_from_workflow_result(db: Session, org_id: str, workflow_type: str, result: dict) -> None:
     if result.get("workflow_status") != "partial_failure":
         return

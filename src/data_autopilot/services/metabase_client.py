@@ -32,17 +32,22 @@ class MetabaseClient:
         body = resp.json()
         return {"ok": bool(body.get("id")), "mode": "live"}
 
-    def create_card(self, name: str, sql: str) -> str:
+    def create_card(self, name: str, sql: str, display: str = "line", database: int | None = None) -> str:
         if self.settings.metabase_mock_mode:
             return f"card_{uuid4().hex[:10]}"
 
+        db_id = database if database is not None else self.settings.metabase_bigquery_database_id
         r = self._client.post(
             f"{self._base_url}/api/card",
             headers=self._headers(),
             json={
                 "name": name,
-                "dataset_query": {"type": "native", "native": {"query": sql}},
-                "display": "line",
+                "dataset_query": {
+                    "type": "native",
+                    "native": {"query": sql},
+                    "database": db_id,
+                },
+                "display": display,
             },
         )
         r.raise_for_status()
