@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from data_autopilot.config.settings import get_settings
 from data_autopilot.main import app
 
 
@@ -13,13 +14,23 @@ def _headers(org_id: str = "org_memo_eval") -> dict[str, str]:
     return {"X-Tenant-Id": org_id, "X-User-Role": "admin"}
 
 
-def test_evaluate_memo_returns_no_providers_when_unconfigured() -> None:
+def test_evaluate_memo_returns_no_providers_when_unconfigured(monkeypatch) -> None:
     """Without LLM keys, should return a helpful error."""
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    get_settings.cache_clear()
+    settings = get_settings()
+    monkeypatch.setattr(settings, "llm_api_key", "")
+    monkeypatch.setattr(settings, "llm_model", "")
+    monkeypatch.setattr(settings, "llm_eval_enabled", False)
+    monkeypatch.setattr(settings, "gpt5_mini_enabled", False)
+    monkeypatch.setattr(settings, "claude_sonnet_enabled", False)
     r = client.post(
         "/api/v1/llm/evaluate-memo",
         headers=_headers(),
         json={"org_id": "org_memo_eval"},
     )
+    get_settings.cache_clear()
     assert r.status_code == 200
     body = r.json()
     assert "error" in body or "results" in body

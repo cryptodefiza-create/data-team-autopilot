@@ -1,6 +1,7 @@
 """Unit tests for multi-provider LLM infrastructure."""
 from __future__ import annotations
 
+from data_autopilot.config.settings import get_settings
 from data_autopilot.services.llm_client import (
     LLMClient,
     LLMProvider,
@@ -60,9 +61,16 @@ def test_call_provider_returns_error_on_bad_url() -> None:
     assert result.latency_ms >= 0
 
 
-def test_llm_client_not_configured_by_default() -> None:
+def test_llm_client_not_configured_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    get_settings.cache_clear()
+    settings = get_settings()
+    monkeypatch.setattr(settings, "llm_api_key", "")
+    monkeypatch.setattr(settings, "llm_model", "")
     client = LLMClient()
     assert not client.is_configured()
+    get_settings.cache_clear()
 
 
 def test_llm_client_with_explicit_provider() -> None:

@@ -114,14 +114,17 @@ def _call_provider(provider: LLMProvider, system_prompt: str, user_prompt: str) 
     try:
         url = f"{base}/chat/completions"
         system_prompt_with_json = system_prompt + " You MUST respond with valid JSON only, no markdown or extra text."
+        # GPT-5 Mini only supports temperature=1 (the default)
+        _no_temp_models = {"gpt-5-mini"}
         payload: dict = {
             "model": provider.model,
-            "temperature": provider.temperature,
             "messages": [
                 {"role": "system", "content": system_prompt_with_json},
                 {"role": "user", "content": user_prompt},
             ],
         }
+        if provider.model not in _no_temp_models:
+            payload["temperature"] = provider.temperature
         # Only add response_format for providers known to support it (OpenAI-compatible)
         # xAI/Grok does not support this parameter
         if "x.ai" not in base and "grok" not in provider.model.lower():

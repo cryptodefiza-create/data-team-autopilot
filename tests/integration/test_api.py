@@ -1,10 +1,27 @@
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 
+from data_autopilot.agents.contracts import AgentPlan, PlanStep
 from data_autopilot.main import app
 from data_autopilot.api.state import agent_service
 
 
 client = TestClient(app)
+
+
+def _deterministic_plan(message: str) -> AgentPlan:
+    """Return a fixed plan so tests don't depend on LLM output."""
+    sql = "SELECT 1 AS health_check"
+    if "dau" in message.lower():
+        sql = (
+            "SELECT DATE(created_at) AS day, COUNT(DISTINCT user_id) AS dau "
+            "FROM analytics.events GROUP BY 1"
+        )
+    return AgentPlan(
+        goal="Respond to user query",
+        steps=[PlanStep(step_id=1, tool="execute_query", inputs={"sql": sql})],
+    )
 
 
 def test_health() -> None:
@@ -21,11 +38,12 @@ def test_agent_run() -> None:
         "message": "show me dau",
         "session_id": "sess_1",
     }
-    r = client.post(
-        "/api/v1/agent/run",
-        json=payload,
-        headers={"X-Tenant-Id": org, "X-User-Role": "member"},
-    )
+    with patch.object(agent_service.planner, "plan", side_effect=_deterministic_plan):
+        r = client.post(
+            "/api/v1/agent/run",
+            json=payload,
+            headers={"X-Tenant-Id": org, "X-User-Role": "member"},
+        )
     assert r.status_code == 200
     body = r.json()
     assert body["response_type"] in {"query_result", "blocked"}
@@ -42,11 +60,12 @@ def test_agent_run_real_execution_path_enabled() -> None:
     original = agent_service.settings.allow_real_query_execution
     agent_service.settings.allow_real_query_execution = True
     try:
-        r = client.post(
-            "/api/v1/agent/run",
-            json=payload,
-            headers={"X-Tenant-Id": org, "X-User-Role": "member"},
-        )
+        with patch.object(agent_service.planner, "plan", side_effect=_deterministic_plan):
+            r = client.post(
+                "/api/v1/agent/run",
+                json=payload,
+                headers={"X-Tenant-Id": org, "X-User-Role": "member"},
+            )
     finally:
         agent_service.settings.allow_real_query_execution = original
 
