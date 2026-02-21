@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 _BASE58_PATTERN = re.compile(r"\b[1-9A-HJ-NP-Za-km-z]{32,44}\b")
 _ETH_PATTERN = re.compile(r"\b0x[0-9a-fA-F]{40}\b")
 _TOKEN_SYMBOL_PATTERN = re.compile(r"\$([A-Za-z]{2,10})")
+# Matches bare uppercase token names like "BONK", "SOL", "USDC" (2-10 chars, all caps)
+_BARE_TOKEN_PATTERN = re.compile(r"\b([A-Z]{2,10})\b")
 _TIME_RANGE_PATTERN = re.compile(r"(\d+)\s*(?:d|day|days)")
 
 _ENTITY_KEYWORDS: dict[str, Entity] = {
@@ -123,9 +125,16 @@ class RequestParser:
 
     @staticmethod
     def _extract_token(message: str) -> str:
+        # Try $SYMBOL first
         match = _TOKEN_SYMBOL_PATTERN.search(message)
         if match:
             return match.group(1).upper()
+        # Fall back to bare uppercase token names (skip common English words)
+        _skip = {"THE", "AND", "FOR", "GET", "SET", "ALL", "TOP", "NFT", "DEX", "TVL", "API"}
+        for m in _BARE_TOKEN_PATTERN.finditer(message):
+            candidate = m.group(1)
+            if candidate not in _skip:
+                return candidate
         return ""
 
     @staticmethod

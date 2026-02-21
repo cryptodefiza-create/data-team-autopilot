@@ -49,6 +49,8 @@ class DashboardDesigner:
             "- number charts should return a single scalar\n"
             "- line/bar charts need a dimension column and a measure column\n"
             "- Always include at least one summary number card\n"
+            "- If a column like 'total_holder_count' already contains a pre-computed "
+            "total, use MAX(total_holder_count) instead of COUNT(*) or COUNT(DISTINCT ...)\n"
             "- Return ONLY valid JSON, no markdown"
         )
 

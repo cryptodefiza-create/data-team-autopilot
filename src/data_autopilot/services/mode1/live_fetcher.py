@@ -10,6 +10,7 @@ from data_autopilot.services.mode1.data_transformer import DataTransformer
 from data_autopilot.services.mode1.interpretation import InterpretationEngine
 from data_autopilot.services.mode1.models import (
     DataRequest,
+    Entity,
     Intent,
     OutputFormat,
     Provenance,
@@ -152,11 +153,34 @@ class LiveFetcher:
         params: dict[str, Any] = {}
         if request.token:
             params["token"] = request.token
-            params["mint"] = request.token
         if request.address:
-            params["address"] = request.address
+            # For token holder/balance queries, the address is the mint address
+            if request.entity in (Entity.TOKEN_HOLDERS, Entity.TOKEN_BALANCES):
+                params["mint"] = request.address
+            else:
+                params["address"] = request.address
+        if not params.get("mint") and request.token:
+            params["mint"] = request.token
         if request.time_range_days:
             params["days"] = request.time_range_days
+
+        # Resolve token symbol → mint address for Helius queries
+        if (
+            decision.provider_name == "helius"
+            and params.get("mint")
+            and not self._looks_like_address(params["mint"])
+        ):
+            resolved = self._resolve_token_address(params["mint"])
+            if resolved:
+                logger.info("Resolved %s → %s", params["mint"], resolved)
+                params["mint"] = resolved
+            else:
+                return {
+                    "response_type": "error",
+                    "summary": f"Could not resolve token symbol '{params['mint']}' to a mint address.",
+                    "data": {},
+                    "warnings": ["token_resolution_failed"],
+                }
 
         result = provider.fetch(decision.method_name, params)
 
@@ -234,6 +258,48 @@ class LiveFetcher:
                 else None
             ),
         )
+
+    @staticmethod
+    def _looks_like_address(value: str) -> bool:
+        """Return True if value looks like a Solana or Ethereum address."""
+        if len(value) >= 32 and all(c.isalnum() for c in value):
+            return True
+        if value.startswith("0x") and len(value) == 42:
+            return True
+        return False
+
+    def _resolve_token_address(self, symbol: str) -> str | None:
+        """Use DexScreener to resolve a token symbol to its mint address."""
+        dex = self._providers.get("dexscreener")
+        if not dex:
+            return None
+        try:
+            result = dex.fetch("search_pairs", {"query": symbol})
+            if result.succeeded and result.records:
+                # Find a Solana pair matching the symbol
+                for record in result.records:
+                    if record.get("chain") == "solana" and record.get("base_token", "").upper() == symbol.upper():
+                        # DexScreener search returns pair info; need to get base token address
+                        # Use the raw API response instead
+                        break
+                # Fallback: use DexScreener search API directly for token address
+                import httpx
+                resp = httpx.get(
+                    "https://api.dexscreener.com/latest/dex/search",
+                    params={"q": symbol},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                pairs = resp.json().get("pairs", [])
+                for p in pairs:
+                    if (
+                        p.get("chainId") == "solana"
+                        and p.get("baseToken", {}).get("symbol", "").upper() == symbol.upper()
+                    ):
+                        return p["baseToken"]["address"]
+        except Exception as exc:
+            logger.warning("Token resolution for %s failed: %s", symbol, exc)
+        return None
 
     def _format_export(
         self,

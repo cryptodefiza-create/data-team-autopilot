@@ -48,6 +48,7 @@ class MetabaseClient:
                     "database": db_id,
                 },
                 "display": display,
+                "visualization_settings": {},
             },
         )
         r.raise_for_status()
@@ -80,11 +81,12 @@ class MetabaseClient:
             dash_id = str(r.json()["id"])
         else:
             dash_id = str(existing["id"])
-        cards_payload = []
+        dashcards_payload = []
         for i, card_id in enumerate(card_ids):
             pos = layout[i]
-            cards_payload.append(
+            dashcards_payload.append(
                 {
+                    "id": -(i + 1),
                     "card_id": int(card_id),
                     "row": pos["row"],
                     "col": pos["col"],
@@ -93,9 +95,9 @@ class MetabaseClient:
                 }
             )
         rc = self._client.put(
-            f"{self._base_url}/api/dashboard/{dash_id}/cards",
+            f"{self._base_url}/api/dashboard/{dash_id}",
             headers=self._headers(),
-            json={"cards": cards_payload},
+            json={"dashcards": dashcards_payload},
         )
         rc.raise_for_status()
         self._dashboards_by_key[key] = {

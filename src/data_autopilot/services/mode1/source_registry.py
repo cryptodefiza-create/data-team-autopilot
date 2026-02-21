@@ -13,6 +13,9 @@ SOURCE_REGISTRY: dict[tuple[Chain, Entity], tuple[str, str]] = {
     (Chain.ETHEREUM, Entity.TOKEN_BALANCES): ("alchemy", "get_token_balances"),
     (Chain.ETHEREUM, Entity.ASSET_TRANSFERS): ("alchemy", "get_asset_transfers"),
     (Chain.ETHEREUM, Entity.LOGS): ("alchemy", "get_logs"),
+    # Cross-chain token holders/balances default to Solana (Helius)
+    (Chain.CROSS_CHAIN, Entity.TOKEN_HOLDERS): ("helius", "get_token_accounts"),
+    (Chain.CROSS_CHAIN, Entity.TOKEN_BALANCES): ("helius", "get_token_accounts"),
     # Cross-chain via CoinGecko
     (Chain.CROSS_CHAIN, Entity.TOKEN_PRICE): ("coingecko", "get_price"),
     (Chain.CROSS_CHAIN, Entity.TOKEN_INFO): ("coingecko", "get_coin_info"),
