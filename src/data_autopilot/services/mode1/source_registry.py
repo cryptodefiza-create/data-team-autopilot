@@ -10,6 +10,7 @@ SOURCE_REGISTRY: dict[tuple[Chain, Entity], tuple[str, str]] = {
     (Chain.SOLANA, Entity.NFT_ASSET): ("helius", "get_asset"),
     (Chain.SOLANA, Entity.TRANSACTION_HISTORY): ("helius", "get_signatures"),
     # Ethereum via Alchemy
+    (Chain.ETHEREUM, Entity.TOKEN_HOLDERS): ("helius", "get_token_accounts"),
     (Chain.ETHEREUM, Entity.TOKEN_BALANCES): ("alchemy", "get_token_balances"),
     (Chain.ETHEREUM, Entity.ASSET_TRANSFERS): ("alchemy", "get_asset_transfers"),
     (Chain.ETHEREUM, Entity.LOGS): ("alchemy", "get_logs"),
@@ -27,8 +28,8 @@ SOURCE_REGISTRY: dict[tuple[Chain, Entity], tuple[str, str]] = {
     (Chain.ETHEREUM, Entity.PRICE_HISTORY): ("coingecko", "get_price_history"),
     # DexScreener — DEX pair data
     (Chain.CROSS_CHAIN, Entity.DEX_PAIR): ("dexscreener", "search_pairs"),
-    (Chain.SOLANA, Entity.DEX_PAIR): ("dexscreener", "get_pair"),
-    (Chain.ETHEREUM, Entity.DEX_PAIR): ("dexscreener", "get_pair"),
+    (Chain.SOLANA, Entity.DEX_PAIR): ("dexscreener", "search_pairs"),
+    (Chain.ETHEREUM, Entity.DEX_PAIR): ("dexscreener", "search_pairs"),
     # DefiLlama — protocol + chain TVL
     (Chain.CROSS_CHAIN, Entity.PROTOCOL_TVL): ("defillama", "get_tvl"),
     (Chain.CROSS_CHAIN, Entity.CHAIN_TVL): ("defillama", "get_chain_tvl"),
@@ -39,6 +40,7 @@ SOURCE_REGISTRY: dict[tuple[Chain, Entity], tuple[str, str]] = {
 # Fallback mappings: if primary provider fails, try fallback
 FALLBACK_REGISTRY: dict[tuple[str, str], tuple[str, str]] = {
     ("coingecko", "get_price"): ("dexscreener", "get_price"),
+    ("helius", "get_token_accounts"): ("moralis", "get_token_accounts"),
 }
 
 

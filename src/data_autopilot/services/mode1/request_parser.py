@@ -77,6 +77,10 @@ class RequestParser:
         address = self._extract_address(message)
         time_range = self._extract_time_range(message)
 
+        # For protocol-level queries, extract protocol name if no token found
+        if entity in (Entity.PROTOCOL_TVL, Entity.CHAIN_TVL) and not token:
+            token = self._extract_protocol_name(message)
+
         if time_range > 0 or "history" in text or "trend" in text or "over" in text:
             intent = Intent.TREND
             if entity == Entity.TOKEN_PRICE:
@@ -97,8 +101,11 @@ class RequestParser:
             "You parse blockchain data requests. Return JSON with keys: "
             "intent (snapshot|trend|lookup), chain (solana|ethereum|cross_chain), "
             "entity (token_holders|token_balances|token_price|token_info|price_history|"
-            "asset_transfers|transaction_history|nft_asset|logs), "
-            "token (symbol without $), address (if any), time_range_days (int, 0 if none)."
+            "asset_transfers|transaction_history|nft_asset|logs|dex_pair|protocol_tvl|chain_tvl), "
+            "token (symbol without $, or protocol/project name for TVL queries), "
+            "address (if any), time_range_days (int, 0 if none).\n"
+            "For TVL/fees/revenue queries about a protocol (e.g. 'TVL of Raydium'), "
+            "use entity=protocol_tvl and set token to the protocol name (e.g. 'Raydium')."
         )
         result = self._llm.generate_json(system_prompt=system_prompt, user_prompt=message)
         return DataRequest(
@@ -153,3 +160,22 @@ class RequestParser:
         if match:
             return int(match.group(1))
         return 0
+
+    @staticmethod
+    def _extract_protocol_name(message: str) -> str:
+        """Extract protocol/project name from queries like 'TVL of Raydium'."""
+        _STOP = {"the", "a", "an", "of", "for", "in", "on", "what", "is", "show", "me",
+                 "get", "tvl", "protocol", "fees", "revenue", "total", "value", "locked"}
+        # Try "of <Name>" or "for <Name>" patterns
+        m = re.search(r"(?:of|for)\s+([A-Za-z][A-Za-z0-9 ]{1,30})", message, re.IGNORECASE)
+        if m:
+            # Take the first meaningful word
+            for word in m.group(1).split():
+                if word.lower() not in _STOP and len(word) >= 2:
+                    return word
+        # Fallback: find any capitalized word that isn't a stop word
+        for word in message.split():
+            clean = word.strip("?.,!")
+            if clean and clean[0].isupper() and clean.lower() not in _STOP and len(clean) >= 2:
+                return clean
+        return ""

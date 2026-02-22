@@ -49,6 +49,7 @@ def _build_mode1_fetcher():
     from data_autopilot.services.providers.defillama import DefiLlamaProvider
     from data_autopilot.services.providers.dexscreener import DexScreenerProvider
     from data_autopilot.services.providers.helius import HeliusProvider
+    from data_autopilot.services.providers.moralis import MoralisProvider
 
     s = get_settings()
     providers = {
@@ -57,13 +58,16 @@ def _build_mode1_fetcher():
         "coingecko": CoinGeckoProvider(),
         "dexscreener": DexScreenerProvider(),
         "defillama": DefiLlamaProvider(),
+        "moralis": MoralisProvider(api_key=s.moralis_api_key),
     }
     key_mgr = PlatformKeyManager()
     if s.helius_api_key:
         key_mgr.register("helius", [s.helius_api_key])
     if s.alchemy_api_key:
         key_mgr.register("alchemy", [s.alchemy_api_key])
-    parser = RequestParser()
+    from data_autopilot.services.llm_client import LLMClient
+    llm = LLMClient()
+    parser = RequestParser(llm=llm if llm.is_configured() else None)
     return LiveFetcher(
         providers=providers,
         key_manager=key_mgr,

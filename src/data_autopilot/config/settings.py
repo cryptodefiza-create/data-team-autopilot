@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     # Blockchain data providers (Mode 1)
     helius_api_key: str = Field(default="")
     alchemy_api_key: str = Field(default="")
+    moralis_api_key: str = Field(default="")
     blockchain_provider_tier: str = Field(default="free")
 
     # Neon persistence (Mode 1 tracking)

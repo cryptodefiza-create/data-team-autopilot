@@ -164,6 +164,10 @@ class LiveFetcher:
         if request.time_range_days:
             params["days"] = request.time_range_days
 
+        # For protocol-level queries (TVL, fees), pass token as protocol name
+        if request.entity in (Entity.PROTOCOL_TVL, Entity.CHAIN_TVL) and request.token:
+            params["protocol"] = request.token
+
         # Resolve token symbol → mint address for Helius queries
         if (
             decision.provider_name == "helius"
