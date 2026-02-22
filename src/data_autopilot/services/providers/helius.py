@@ -46,11 +46,21 @@ class HeliusProvider(BaseProvider):
         return self._get_token_accounts_by_owner(address)
 
     def _get_token_holders_by_mint(self, mint: str) -> ProviderResult:
-        # Step 1: Get top 20 holders instantly via native Solana RPC
+        # Step 1: Try getTokenLargestAccounts (instant, but fails for very large tokens)
         data = self._post_json_rpc(
             self.base_url, "getTokenLargestAccounts", [mint]
         )
+        rpc_error = data.get("error")
         largest = data.get("result", {}).get("value", [])
+
+        # For very large tokens (USDC, SOL etc.) the RPC returns an error.
+        # Fall back to Helius getTokenAccounts sorted by amount.
+        if rpc_error or not largest:
+            logger.info(
+                "getTokenLargestAccounts failed for %s (%s), falling back to getTokenAccounts",
+                mint, rpc_error.get("message", "") if rpc_error else "empty",
+            )
+            return self._get_top_holders_via_helius(mint)
 
         # Step 2: Get total holder count (active holders, excludes zero-balance)
         total_holders = self._count_token_holders(mint)
@@ -63,7 +73,6 @@ class HeliusProvider(BaseProvider):
         for i, account in enumerate(largest):
             token_account = account.get("address", "")
             wallet_owner = owner_map.get(token_account, token_account)
-            # Use uiAmount (already decimal-adjusted by the RPC)
             ui_amount = account.get("uiAmount", 0)
             records.append({
                 "token_account": token_account,
@@ -79,6 +88,50 @@ class HeliusProvider(BaseProvider):
             method="get_token_accounts",
             records=records,
             total_available=total_holders or len(records),
+        )
+
+    def _get_top_holders_via_helius(self, mint: str) -> ProviderResult:
+        """Fallback for very large tokens (USDC, SOL, USDT etc.).
+
+        On-chain RPCs cannot sort by balance for tokens with millions of holders.
+        Return a sample of holders with a note about the limitation.
+        """
+        data = self._post_json_rpc(
+            self.base_url, "getTokenAccounts", {"mint": mint, "limit": 20}
+        )
+        items = data.get("result", {}).get("token_accounts", [])
+        decimals = self._get_token_decimals(mint)
+
+        # Resolve owners
+        token_addrs = [it.get("address", "") for it in items if it.get("address")]
+        owner_map = self._resolve_owners(token_addrs)
+
+        records = []
+        for i, item in enumerate(items):
+            token_account = item.get("address", "")
+            wallet_owner = owner_map.get(token_account, item.get("owner", token_account))
+            raw_amount = int(item.get("amount", 0))
+            adjusted = round(raw_amount / (10 ** decimals)) if decimals else raw_amount
+            records.append({
+                "token_account": token_account,
+                "mint": mint,
+                "owner": wallet_owner,
+                "amount": adjusted,
+                "rank": i + 1,
+                "total_holder_count": 0,
+                "note": "Sample holders (token too large for on-chain top-holder ranking)",
+            })
+
+        # Sort by amount descending
+        records.sort(key=lambda r: r["amount"], reverse=True)
+        for i, r in enumerate(records):
+            r["rank"] = i + 1
+
+        return ProviderResult(
+            provider=self.name,
+            method="get_token_accounts",
+            records=records,
+            total_available=len(records),
         )
 
     def _count_token_holders(self, mint: str) -> int:

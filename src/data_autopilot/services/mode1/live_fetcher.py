@@ -268,35 +268,46 @@ class LiveFetcher:
             return True
         return False
 
+    # Well-known Solana token mint addresses (avoids DexScreener impersonators)
+    _KNOWN_MINTS: dict[str, str] = {
+        "SOL": "So11111111111111111111111111111111111111112",
+        "USDC": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "USDT": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+        "BONK": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+        "JUP": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+        "WIF": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+        "PYTH": "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
+        "RAY": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+        "ORCA": "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",
+        "MNGO": "MangoCzJ36AjZyKwVj3VnYU4GTonjfVEnJmvvWaxLac",
+        "RENDER": "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",
+        "HNT": "hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux",
+        "JITO": "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",
+    }
+
     def _resolve_token_address(self, symbol: str) -> str | None:
-        """Use DexScreener to resolve a token symbol to its mint address."""
-        dex = self._providers.get("dexscreener")
-        if not dex:
-            return None
+        """Resolve a token symbol to its Solana mint address."""
+        # Check well-known tokens first
+        known = self._KNOWN_MINTS.get(symbol.upper())
+        if known:
+            return known
+
+        # Fallback: use DexScreener search API
         try:
-            result = dex.fetch("search_pairs", {"query": symbol})
-            if result.succeeded and result.records:
-                # Find a Solana pair matching the symbol
-                for record in result.records:
-                    if record.get("chain") == "solana" and record.get("base_token", "").upper() == symbol.upper():
-                        # DexScreener search returns pair info; need to get base token address
-                        # Use the raw API response instead
-                        break
-                # Fallback: use DexScreener search API directly for token address
-                import httpx
-                resp = httpx.get(
-                    "https://api.dexscreener.com/latest/dex/search",
-                    params={"q": symbol},
-                    timeout=10,
-                )
-                resp.raise_for_status()
-                pairs = resp.json().get("pairs", [])
-                for p in pairs:
-                    if (
-                        p.get("chainId") == "solana"
-                        and p.get("baseToken", {}).get("symbol", "").upper() == symbol.upper()
-                    ):
-                        return p["baseToken"]["address"]
+            import httpx
+            resp = httpx.get(
+                "https://api.dexscreener.com/latest/dex/search",
+                params={"q": symbol},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            pairs = resp.json().get("pairs", [])
+            for p in pairs:
+                if (
+                    p.get("chainId") == "solana"
+                    and p.get("baseToken", {}).get("symbol", "").upper() == symbol.upper()
+                ):
+                    return p["baseToken"]["address"]
         except Exception as exc:
             logger.warning("Token resolution for %s failed: %s", symbol, exc)
         return None
